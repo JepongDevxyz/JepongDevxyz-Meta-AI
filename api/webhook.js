@@ -32,14 +32,16 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // 2. Handling Attachments (Images, Audio)
+        // 2. Handling Attachments (Homework Pictures, Images, Audio)
         if (webhookEvent.message && webhookEvent.message.attachments) {
           const attachment = webhookEvent.message.attachments[0];
 
           if (attachment.type === 'image') {
             await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-            await sendTextMessage(senderPsid, "👁️ Sinu-suri ko ang iyong larawan...", PAGE_ACCESS_TOKEN);
-            const visionReply = await analyzeImageWithGemini(attachment.payload.url, getRandomApiKey(apiKeys));
+            await sendTextMessage(senderPsid, "📖 Sinu-suri ko ang iyong larawan/homework... Kaya natin 'to! ✨", PAGE_ACCESS_TOKEN);
+            
+            // Homework & Image Analyzer Logic
+            const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, getRandomApiKey(apiKeys));
             await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
             await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
@@ -47,20 +49,20 @@ export default async function handler(req, res) {
 
           if (attachment.type === 'audio') {
             await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-            await sendTextMessage(senderPsid, "🎙️ Pinakikinggan ko ang audio message...", PAGE_ACCESS_TOKEN);
+            await sendTextMessage(senderPsid, "🎙️ Pinakikinggan ko ang boses mo...", PAGE_ACCESS_TOKEN);
             const text = await transcribeAudio(attachment.payload.url);
             if (text) {
               await sendTextMessage(senderPsid, `Narinig ko: "${text}"`, PAGE_ACCESS_TOKEN);
               await processAIWithMemory(senderPsid, text, apiKeys, PAGE_ACCESS_TOKEN);
             } else {
-              await sendTextMessage(senderPsid, "Pasensya na, hindi ko naintindihan ang boses sa audio.", PAGE_ACCESS_TOKEN);
+              await sendTextMessage(senderPsid, "Pasensya na, hindi ko gaanong naintindihan ang boses sa audio.", PAGE_ACCESS_TOKEN);
             }
             await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
           }
         }
 
-        // 3. Handling Text Messages
+        // 3. Handling Text Messages & Special Requests
         if (webhookEvent.message && !webhookEvent.message.is_echo) {
           const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
           const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
@@ -68,11 +70,31 @@ export default async function handler(req, res) {
           const finalMessage = quickReplyPayload || userMessage;
           if (!finalMessage) continue;
 
-          // I-check kung command ang nireceive
+          // Check kung Command ang nireceive
           const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
           if (handled) continue;
 
-          // Check Mode
+          // Special Keywords Check (e.g. Periodic Table Request)
+          const lowerText = finalMessage.toLowerCase();
+          if (lowerText.includes('periodic table')) {
+            await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+            await sendTextMessage(senderPsid, "🧪 **Narito ang HD Periodic Table of Elements para sa iyong pag-aaral!** ⚛️", PAGE_ACCESS_TOKEN);
+            
+            // Magpapadala ng malinaw na Periodic Table Image
+            const periodicTableImg = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Periodic_table_large.svg/1920px-Periodic_table_large.svg.png";
+            await sendMediaAttachment(senderPsid, 'image', periodicTableImg, PAGE_ACCESS_TOKEN);
+            
+            const periodicInfo = "💡 **Quick Guide sa Periodic Table:**\n\n" +
+                                 "• **Atomic Number (Z):** Dami ng protons sa nucleus.\n" +
+                                 "• **Periods (Horizontal Rows):** Nagpapakita ng bilang ng electron shells (1 hanggang 7).\n" +
+                                 "• **Groups (Vertical Columns):** Mga elementong may magkakahawig na chemical properties (hal. Group 18 = Noble Gases).\n\n" +
+                                 "May partikular ka bang elementong gustong malaman (e.g. Gold, Oxygen, Uranium)? Tanungin mo lang ako! 😊";
+            await sendLongTextMessage(senderPsid, periodicInfo, PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+            continue;
+          }
+
+          // Check Active Mode (halimbawa: Image Mode)
           let userMode = null;
           try {
             userMode = await kv.get(`user_mode_${senderPsid}`);
@@ -80,14 +102,13 @@ export default async function handler(req, res) {
             console.error("KV Mode Read Error:", e);
           }
 
-          // Image Mode Check
           if (userMode === 'IMAGE_MODE') {
             await kv.del(`user_mode_${senderPsid}`);
             await generateAndSendImage(senderPsid, finalMessage, PAGE_ACCESS_TOKEN);
             continue;
           }
 
-          // Normal AI Conversation
+          // Default: Student-Friendly AI Tutor Response
           await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
         }
       }
@@ -99,7 +120,7 @@ export default async function handler(req, res) {
   res.status(405).send('Method Not Allowed');
 }
 
-// Logic para sa Commands (Text man o Clicked Button)
+// Commands & Interactive Options
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
   const lowerText = input.toLowerCase().trim();
 
@@ -108,14 +129,19 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
   // Command: /commands o /help
   if (lowerText === '/commands' || lowerText === '/help' || lowerText === 'CMD_HELP') {
     const buttons = [
-      { type: "postback", title: "🎨 Create Image", payload: "CMD_IMAGEN" },
-      { type: "postback", title: "🧹 Clear History", payload: "CMD_CLEAR" },
-      { type: "postback", title: "🔄 Refresh AI", payload: "CMD_REFRESH" }
+      { type: "postback", title: "🎨 Draw / Image", payload: "CMD_IMAGEN" },
+      { type: "postback", title: "🧪 Periodic Table", payload: "Periodic Table" },
+      { type: "postback", title: "🧹 Reset Memory", payload: "CMD_CLEAR" }
     ];
 
     await sendButtonTemplate(
       senderPsid,
-      "🛠️ **JepongDevxyz AI Commands**\n\nPumili ng option sa ibaba o i-type ang command:\n\n• /imagen <prompt>\n• /music <title>\n• /voice <text>",
+      "📚 **JepongDevxyz AI - Your Study Buddy** 🤖✨\n\n" +
+      "Kaya kong sagutan ang iyong homework (I-send lang ang picture!), ipaliwanag ang mga aralin, o maghanap ng kanta!\n\n" +
+      "Pumili sa mga buttons o i-type ang commands:\n" +
+      "• **/imagen [prompt]** - Magpa-draw ng image\n" +
+      "• **/music [title]** - Maghanap ng kanta\n" +
+      "• **/voice [text]** - Text to speech",
       buttons,
       pageToken
     );
@@ -126,7 +152,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
   // Command: /imagen
   if (lowerText === '/imagen' || lowerText === 'CMD_IMAGEN') {
     await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 300 });
-    await sendTextMessage(senderPsid, "🎨 **Image Mode Activated!**\n\nI-type at i-send mo lang ang detalye ng larawan na gusto mong ipagawa (e.g. *cat wearing astronaut helmet*).\n\n*Pwede ka ring mag-type ng `/cancel` kung gusto mong umalis.*", pageToken);
+    await sendTextMessage(senderPsid, "🎨 **Image Generator Mode!**\n\nI-type lang ang larawang gusto mong likhain (e.g., *diagram of a plant cell* o *solar system illustration*).", pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
@@ -145,9 +171,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     await kv.del(`chat_history_${senderPsid}`);
     await kv.del(`user_mode_${senderPsid}`);
 
-    let replyText = "✅ **Cleared & Refreshed!** Nabura na ang chat history natin sa memory.";
-    if (lowerText === '/stop') replyText = "🚫 **Inihinto ang response!** Nabura na rin ang memory.";
-
+    let replyText = "✅ **Refreshed!** Handa na uli akong tumulong sa iyong mga bagong aralin!";
     await sendTextMessage(senderPsid, replyText, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -158,12 +182,12 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     const query = input.replace(/(\/music|\/kanta)/gi, '').trim();
     const track = await searchMusic(query);
     if (track) {
-      await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Full Track: ${track.trackViewUrl}`, pageToken);
+      await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Link: ${track.trackViewUrl}`, pageToken);
       if (track.previewUrl) {
         await sendMediaAttachment(senderPsid, 'audio', track.previewUrl, pageToken);
       }
     } else {
-      await sendTextMessage(senderPsid, "❌ Walang nahanap na kanta.", pageToken);
+      await sendTextMessage(senderPsid, "❌ Pasensya na, walang nahanap na kanta.", pageToken);
     }
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -178,54 +202,44 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // Command: /exit o /cancel
-  if (lowerText === '/exit' || lowerText === '/cancel') {
-    await kv.del(`user_mode_${senderPsid}`);
-    await sendTextMessage(senderPsid, "🔄 Naka-exit ka na sa anumang active mode.", pageToken);
-    await sendTypingOff(senderPsid, pageToken);
-    return true;
-  }
-
   await sendTypingOff(senderPsid, pageToken);
-  return false; // Hindi command, itutuloy sa AI
+  return false;
 }
 
-// Helper: Send Button Template (Interactive Messenger Buttons)
-async function sendButtonTemplate(senderPsid, text, buttons, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: senderPsid },
-      message: {
-        attachment: {
-          type: "template",
-          payload: {
-            template_type: "button",
-            text: text,
-            buttons: buttons
-          }
-        }
-      }
-    })
-  });
-}
-
-// Image Generation Helper
-async function generateAndSendImage(senderPsid, prompt, pageToken) {
-  await sendTextMessage(senderPsid, `🖼️ **Ginagawa ang iyong larawan:**\n"${prompt}"...\n\nSandali lamang po!`, pageToken);
-  
-  const seed = Math.floor(Math.random() * 1000000);
-  const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
-
+// Student & Homework Analyzer (Vision AI)
+async function analyzeHomeworkWithGemini(imageUrl, apiKey) {
   try {
-    await sendMediaAttachment(senderPsid, 'image', imageUrl, pageToken);
-  } catch (error) {
-    await sendTextMessage(senderPsid, "❌ Nagkaroon ng problema sa pag-generate ng larawan. Pakisubukan ulit.", pageToken);
+    const imgRes = await fetch(imageUrl);
+    const buffer = await imgRes.arrayBuffer();
+    const base64Data = Buffer.from(buffer).toString("base64");
+
+    const prompt = "You are an encouraging, expert student AI tutor like Dola. " +
+                   "Analyze the uploaded photo carefully. If it contains a homework question, math problem, worksheet, or assignment: " +
+                   "1. Provide the correct answer clearly. " +
+                   "2. Explain the step-by-step solution in simple, student-friendly terms so the user actually understands the concept. " +
+                   "3. Use warm emojis and tone. Reply in Tagalog/Filipino or English depending on the language of the prompt.";
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Pasensya na, hindi ko masyadong mabasa ang nakasulat sa larawan. Pwedeng paki-picture uli nang mas malinaw? 😊';
+  } catch (e) {
+    return 'Nagkaroon ng konting problema sa pagproseso ng larawan. Paki-try ulit!';
   }
 }
 
-// AI Memory Processing
+// AI Companion with Student Personality
 async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) {
   let history = [];
   try {
@@ -260,52 +274,47 @@ async function getGeminiResponseWithHistory(history, apiKey) {
   if (!apiKey) return 'Error: Walang na-detect na Gemini API Key.';
 
   try {
+    const systemInstruction = 
+      "You are 'JepongDevxyz AI', a friendly, intelligent, and highly supportive student AI assistant (similar to Dola AI), created by Jay-Ar Lee Espiritu. " +
+      "PERSONALITY & BEHAVIOR: " +
+      "1. Be approachable, encouraging, and clear. Use relatable, student-friendly tone with emojis. " +
+      "2. HOMEWORK & ACADEMICS: If the user asks an academic question, math equation, essay topic, or problem, explain the solution step-by-step so they can learn. " +
+      "3. LANGUAGE: Automatically match the user's language (Tagalog, Taglish, or English). " +
+      "4. IDENTITY: Always introduce or refer to yourself as JepongDevxyz AI created by Jay-Ar Lee Espiritu.";
+
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{
-            text: "You are 'JepongDevxyz AI', an AI assistant created by Jay-Ar Lee Espiritu. Always identify as JepongDevxyz AI created by Jay-Ar Lee Espiritu."
-          }]
+          parts: [{ text: systemInstruction }]
         },
         contents: history
       })
     });
 
     const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Pasensya na, hindi ko maproseso ang tanong.';
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Pasensya na, nagkaroon ako ng saglit na problema sa pag-isip. Paki-tanong ulit! 😊';
   } catch (error) {
     return 'Nagkaroon ng problema sa pagproseso ng AI response.';
   }
 }
 
-async function analyzeImageWithGemini(imageUrl, apiKey) {
+// Image Generator
+async function generateAndSendImage(senderPsid, prompt, pageToken) {
+  await sendTextMessage(senderPsid, `🖼️ **Ginagawa ko na ang larawan para sa:**\n"${prompt}"...\n\nSandali lang po! ✨`, pageToken);
+  
+  const seed = Math.floor(Math.random() * 1000000);
+  const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+
   try {
-    const imgRes = await fetch(imageUrl);
-    const buffer = await imgRes.arrayBuffer();
-    const base64Data = Buffer.from(buffer).toString("base64");
-
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: "Ipaliwanag at suriin ang larawang ito sa Tagalog/English:" },
-            { inline_data: { mime_type: "image/jpeg", data: base64Data } }
-          ]
-        }]
-      })
-    });
-
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Hindi ko mabasa ang larawan.';
-  } catch (e) {
-    return 'Error sa pag-proseso ng larawan.';
+    await sendMediaAttachment(senderPsid, 'image', imageUrl, pageToken);
+  } catch (error) {
+    await sendTextMessage(senderPsid, "❌ Pasensya na, nagkaroon ng error sa pag-generate ng image.", pageToken);
   }
 }
 
+// Helpers for API Calls
 async function searchMusic(query) {
   try {
     const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&limit=1&media=music`);
@@ -329,6 +338,22 @@ async function transcribeAudio(audioUrl) {
   } catch (err) {
     return null;
   }
+}
+
+async function sendButtonTemplate(senderPsid, text, buttons, pageToken) {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: senderPsid },
+      message: {
+        attachment: {
+          type: "template",
+          payload: { template_type: "button", text: text, buttons: buttons }
+        }
+      }
+    })
+  });
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
