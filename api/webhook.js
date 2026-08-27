@@ -25,7 +25,14 @@ export default async function handler(req, res) {
         const webhookEvent = entry.messaging[0];
         const senderPsid = webhookEvent.sender.id;
 
-        // 1. Handling Attachments (Images, Audio)
+        // 1. Handling Button Clicks (Postbacks)
+        if (webhookEvent.postback) {
+          const payload = webhookEvent.postback.payload;
+          await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN);
+          continue;
+        }
+
+        // 2. Handling Attachments (Images, Audio)
         if (webhookEvent.message && webhookEvent.message.attachments) {
           const attachment = webhookEvent.message.attachments[0];
 
@@ -53,21 +60,19 @@ export default async function handler(req, res) {
           }
         }
 
-        // 2. Handling Text Messages & Commands (kasama ang Quick Reply Buttons)
+        // 3. Handling Text Messages
         if (webhookEvent.message && !webhookEvent.message.is_echo) {
           const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
           const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
           
-          // Pag-check kung nag-click sa Quick Reply o nag-type nang manu-mano
           const finalMessage = quickReplyPayload || userMessage;
-          const lowerText = finalMessage.toLowerCase();
-
           if (!finalMessage) continue;
 
-          // Awtomatikong 'Typing...' animation
-          await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+          // I-check kung command ang nireceive
+          const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+          if (handled) continue;
 
-          // Check Active User Mode mula sa Vercel KV
+          // Check Mode
           let userMode = null;
           try {
             userMode = await kv.get(`user_mode_${senderPsid}`);
@@ -75,106 +80,15 @@ export default async function handler(req, res) {
             console.error("KV Mode Read Error:", e);
           }
 
-          // COMMAND: Exit / Cancel Special Mode
-          if (lowerText === '/exit' || lowerText === '/cancel' || lowerText === '❌ cancel') {
-            if (userMode) {
-              await kv.del(`user_mode_${senderPsid}`);
-              await sendTextMessage(senderPsid, "🔄 **Naka-exit ka na sa special mode.** Babalik na tayo sa normal na kwentuhan!", PAGE_ACCESS_TOKEN);
-            } else {
-              await sendTextMessage(senderPsid, "Wala ka naman sa anumang special mode ngayon.", PAGE_ACCESS_TOKEN);
-            }
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-            continue;
-          }
-
-          // COMMAND: /stop, /clear, /delete, /refresh (Pagbura ng chat history)
-          if (['/stop', '/clear', '/delete', '/refresh'].includes(lowerText) || lowerText === '🧹 clear conversation' || lowerText === '🔄 refresh ai') {
-            await kv.del(`chat_history_${senderPsid}`);
-            
-            let replyText = "✅ **Cleared & Refreshed!** Nabura na ang chat history natin sa memory.";
-            if (lowerText === '/stop') replyText = "🚫 **Inihinto ang response!** Nabura na rin ang memory para sa bagong usapan.";
-            if (lowerText === '/refresh' || lowerText === '🔄 refresh ai') replyText = "🔄 **AI Refreshed!** Handa nang magsimula muli mula sa simula.";
-
-            await sendTextMessage(senderPsid, replyText, PAGE_ACCESS_TOKEN);
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-            continue;
-          }
-
-          // COMMAND: /commands o /help (Na may Quick Reply Buttons na pwedeng iclick)
-          if (lowerText === '/commands' || lowerText === '/help' || lowerText === '❓ list of commands') {
-            const commandsText = "🛠️ **Available Commands:**\n\n" +
-                                 "I-click ang buttons sa ibaba o i-type ang command:\n\n" +
-                                 "👉 **/imagen** - Activate Image Mode\n" +
-                                 "👉 **/music [title]** - Maghanap ng kanta\n" +
-                                 "👉 **/voice [text]** - Text to Speech\n" +
-                                 "👉 **/stop** - Itigil ang pag-reply\n" +
-                                 "👉 **/clear** / **/refresh** - Burahin ang history";
-
-            const quickReplies = [
-              { title: "🎨 /imagen", payload: "/imagen" },
-              { title: "🎵 Music", payload: "/music Pasilyo" },
-              { title: "🎙️ Voice", payload: "/voice Kamusta?" },
-              { title: "🧹 Clear", payload: "/clear" },
-              { title: "🔄 Refresh", payload: "/refresh" }
-            ];
-
-            await sendQuickReply(senderPsid, commandsText, quickReplies, PAGE_ACCESS_TOKEN);
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-            continue;
-          }
-
-          // COMMAND: /imagen - Activate Image Generation Mode
-          if (lowerText === '/imagen' || lowerText === '🎨 /imagen') {
-            await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 300 }); // Expire sa 5 mins
-            
-            const infoText = "🎨 **Image Generation Mode Activated!**\n\nI-type at i-send mo lang ang detalye o prompt ng larawan na gusto mong ipagawa (halimbawa: *Spiderman mask in high quality*).\n\n💡 *Note: Pagkatapos nitong gumawa ng isang larawan, kusa itong babalik sa normal mode.*";
-            const cancelBtn = [{ title: "❌ Cancel", payload: "/cancel" }];
-            
-            await sendQuickReply(senderPsid, infoText, cancelBtn, PAGE_ACCESS_TOKEN);
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-            continue;
-          }
-
-          // IF USER IS CURRENTLY IN IMAGE MODE
+          // Image Mode Check
           if (userMode === 'IMAGE_MODE') {
-            await kv.del(`user_mode_${senderPsid}`); // Auto exit mode matapos mag-generate
-
-            await sendTextMessage(senderPsid, `🖼️ **Ginagawa ang iyong larawan para sa:**\n"${finalMessage}"...\n\nSandali lamang po!`, PAGE_ACCESS_TOKEN);
-            
-            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(finalMessage)}?width=1024&height=1024&nologo=true`;
-            await sendMediaAttachment(senderPsid, 'image', imageUrl, PAGE_ACCESS_TOKEN);
-            
-            await sendTextMessage(senderPsid, "✅ **Tapos na ang pag-generate!** Nabalik ka na sa Normal Chat Mode. I-type ulit ang **/imagen** kung gusto mong magpa-generate ng panibagong larawan.", PAGE_ACCESS_TOKEN);
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+            await kv.del(`user_mode_${senderPsid}`);
+            await generateAndSendImage(senderPsid, finalMessage, PAGE_ACCESS_TOKEN);
             continue;
           }
 
-          // COMMAND: Music Command
-          if (lowerText.startsWith('/music ') || lowerText.startsWith('/kanta ')) {
-            const query = finalMessage.replace(/(\/music|\/kanta)/gi, '').trim();
-            const track = await searchMusic(query);
-            if (track) {
-              await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Full Track: ${track.trackViewUrl}`, PAGE_ACCESS_TOKEN);
-              if (track.previewUrl) {
-                await sendMediaAttachment(senderPsid, 'audio', track.previewUrl, PAGE_ACCESS_TOKEN);
-              }
-              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-              continue;
-            }
-          }
-
-          // COMMAND: Text-To-Speech (/voice)
-          if (lowerText.startsWith('/voice ') || lowerText.startsWith('/speak ')) {
-            const textToSpeak = finalMessage.replace(/(\/voice|\/speak)/gi, '').trim();
-            const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textToSpeak)}&tl=tl&client=tw-ob`;
-            await sendMediaAttachment(senderPsid, 'audio', ttsUrl, PAGE_ACCESS_TOKEN);
-            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-            continue;
-          }
-
-          // DEFAULT: Normal AI Conversation sa Gemini na may Memory
+          // Normal AI Conversation
           await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
         }
       }
       return res.status(200).send('EVENT_RECEIVED');
@@ -185,7 +99,133 @@ export default async function handler(req, res) {
   res.status(405).send('Method Not Allowed');
 }
 
-// Conversation Memory Handling
+// Logic para sa Commands (Text man o Clicked Button)
+async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
+  const lowerText = input.toLowerCase().trim();
+
+  await sendTypingOn(senderPsid, pageToken);
+
+  // Command: /commands o /help
+  if (lowerText === '/commands' || lowerText === '/help' || lowerText === 'CMD_HELP') {
+    const buttons = [
+      { type: "postback", title: "🎨 Create Image", payload: "CMD_IMAGEN" },
+      { type: "postback", title: "🧹 Clear History", payload: "CMD_CLEAR" },
+      { type: "postback", title: "🔄 Refresh AI", payload: "CMD_REFRESH" }
+    ];
+
+    await sendButtonTemplate(
+      senderPsid,
+      "🛠️ **JepongDevxyz AI Commands**\n\nPumili ng option sa ibaba o i-type ang command:\n\n• /imagen <prompt>\n• /music <title>\n• /voice <text>",
+      buttons,
+      pageToken
+    );
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  // Command: /imagen
+  if (lowerText === '/imagen' || lowerText === 'CMD_IMAGEN') {
+    await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 300 });
+    await sendTextMessage(senderPsid, "🎨 **Image Mode Activated!**\n\nI-type at i-send mo lang ang detalye ng larawan na gusto mong ipagawa (e.g. *cat wearing astronaut helmet*).\n\n*Pwede ka ring mag-type ng `/cancel` kung gusto mong umalis.*", pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  if (lowerText.startsWith('/imagen ')) {
+    const prompt = input.replace(/^\/imagen\s*/i, '').trim();
+    if (prompt) {
+      await generateAndSendImage(senderPsid, prompt, pageToken);
+      await sendTypingOff(senderPsid, pageToken);
+      return true;
+    }
+  }
+
+  // Command: /clear /refresh /stop
+  if (['/stop', '/clear', '/delete', '/refresh', 'CMD_CLEAR', 'CMD_REFRESH'].includes(lowerText)) {
+    await kv.del(`chat_history_${senderPsid}`);
+    await kv.del(`user_mode_${senderPsid}`);
+
+    let replyText = "✅ **Cleared & Refreshed!** Nabura na ang chat history natin sa memory.";
+    if (lowerText === '/stop') replyText = "🚫 **Inihinto ang response!** Nabura na rin ang memory.";
+
+    await sendTextMessage(senderPsid, replyText, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  // Command: /music
+  if (lowerText.startsWith('/music ') || lowerText.startsWith('/kanta ')) {
+    const query = input.replace(/(\/music|\/kanta)/gi, '').trim();
+    const track = await searchMusic(query);
+    if (track) {
+      await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Full Track: ${track.trackViewUrl}`, pageToken);
+      if (track.previewUrl) {
+        await sendMediaAttachment(senderPsid, 'audio', track.previewUrl, pageToken);
+      }
+    } else {
+      await sendTextMessage(senderPsid, "❌ Walang nahanap na kanta.", pageToken);
+    }
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  // Command: /voice
+  if (lowerText.startsWith('/voice ') || lowerText.startsWith('/speak ')) {
+    const textToSpeak = input.replace(/(\/voice|\/speak)/gi, '').trim();
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textToSpeak)}&tl=tl&client=tw-ob`;
+    await sendMediaAttachment(senderPsid, 'audio', ttsUrl, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  // Command: /exit o /cancel
+  if (lowerText === '/exit' || lowerText === '/cancel') {
+    await kv.del(`user_mode_${senderPsid}`);
+    await sendTextMessage(senderPsid, "🔄 Naka-exit ka na sa anumang active mode.", pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
+  await sendTypingOff(senderPsid, pageToken);
+  return false; // Hindi command, itutuloy sa AI
+}
+
+// Helper: Send Button Template (Interactive Messenger Buttons)
+async function sendButtonTemplate(senderPsid, text, buttons, pageToken) {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: senderPsid },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            text: text,
+            buttons: buttons
+          }
+        }
+      }
+    })
+  });
+}
+
+// Image Generation Helper
+async function generateAndSendImage(senderPsid, prompt, pageToken) {
+  await sendTextMessage(senderPsid, `🖼️ **Ginagawa ang iyong larawan:**\n"${prompt}"...\n\nSandali lamang po!`, pageToken);
+  
+  const seed = Math.floor(Math.random() * 1000000);
+  const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+
+  try {
+    await sendMediaAttachment(senderPsid, 'image', imageUrl, pageToken);
+  } catch (error) {
+    await sendTextMessage(senderPsid, "❌ Nagkaroon ng problema sa pag-generate ng larawan. Pakisubukan ulit.", pageToken);
+  }
+}
+
+// AI Memory Processing
 async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) {
   let history = [];
   try {
@@ -195,7 +235,6 @@ async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) 
   }
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
-
   if (history.length > 10) history = history.slice(-10);
 
   const selectedApiKey = getRandomApiKey(apiKeys);
@@ -227,9 +266,7 @@ async function getGeminiResponseWithHistory(history, apiKey) {
       body: JSON.stringify({
         system_instruction: {
           parts: [{
-            text: "You are 'JepongDevxyz AI', an AI assistant created by Jay-Ar Lee Espiritu. " +
-                  "Identity: Always identify as JepongDevxyz AI created by Jay-Ar Lee Espiritu. " +
-                  "Language: Detect user language automatically and reply in that EXACT language naturally."
+            text: "You are 'JepongDevxyz AI', an AI assistant created by Jay-Ar Lee Espiritu. Always identify as JepongDevxyz AI created by Jay-Ar Lee Espiritu."
           }]
         },
         contents: history
@@ -298,10 +335,7 @@ async function sendTypingOn(senderPsid, pageToken) {
   await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: senderPsid },
-      sender_action: "typing_on"
-    })
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
   });
 }
 
@@ -309,31 +343,7 @@ async function sendTypingOff(senderPsid, pageToken) {
   await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: senderPsid },
-      sender_action: "typing_off"
-    })
-  });
-}
-
-// Function para sa Quick Replies (Pwedeng iclick na buttons sa Messenger)
-async function sendQuickReply(senderPsid, text, replies, pageToken) {
-  const formattedReplies = replies.map(r => ({
-    content_type: "text",
-    title: r.title,
-    payload: r.payload
-  }));
-
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      recipient: { id: senderPsid },
-      message: {
-        text: text,
-        quick_replies: formattedReplies
-      }
-    })
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
   });
 }
 
