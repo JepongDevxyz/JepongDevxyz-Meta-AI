@@ -1,9 +1,8 @@
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-  // 1. Webhook Verification (GET Request mula sa Meta)
   if (req.method === 'GET') {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -16,7 +15,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2. Handling Incoming Messages (POST Request)
   if (req.method === 'POST') {
     const body = req.body;
 
@@ -27,7 +25,7 @@ export default async function handler(req, res) {
 
         if (webhookEvent.message && webhookEvent.message.text && !webhookEvent.message.is_echo) {
           const userMessage = webhookEvent.message.text;
-          const aiReply = await getChatGPTResponse(userMessage, OPENAI_API_KEY);
+          const aiReply = await getGeminiResponse(userMessage, GEMINI_API_KEY);
           await sendTextMessage(senderPsid, aiReply, PAGE_ACCESS_TOKEN);
         }
       }
@@ -40,25 +38,27 @@ export default async function handler(req, res) {
   res.status(405).send('Method Not Allowed');
 }
 
-async function getChatGPTResponse(userPrompt, apiKey) {
+async function getGeminiResponse(userPrompt, apiKey) {
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'Ikaw ay isang matulungin at maasikasong Facebook Assistant.' },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: 300
+        system_instruction: {
+          parts: [{
+            text: "You are 'JepongDevxyz AI', an AI assistant created by Jay-Ar Lee Espiritu. " +
+                  "Identity Rule: If anyone asks who you are or who created/developed you, state clearly that you are JepongDevxyz AI and you were created by Jay-Ar Lee Espiritu. " +
+                  "Language Rule: Automatically detect the language used by the user (Tagalog, English, Taglish, Spanish, etc.) and respond in that EXACT same language naturally."
+          }]
+        },
+        contents: [{
+          parts: [{ text: userPrompt }]
+        }]
       })
     });
+
     const data = await response.json();
-    return data.choices?.[0]?.message?.content?.trim() || 'Pasensya na, hindi ko maproseso ang iyong tanong sa ngayon.';
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Pasensya na, hindi ko maproseso ang tanong sa ngayon.';
   } catch (error) {
     return 'Nagkaroon ng problema sa AI response.';
   }
