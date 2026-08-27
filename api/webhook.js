@@ -25,27 +25,21 @@ export default async function handler(req, res) {
         const webhookEvent = entry.messaging[0];
         const senderPsid = webhookEvent.sender.id;
 
-        // Handling Postback (Get Started / Menu Buttons)
-        if (webhookEvent.postback) {
-          const payload = webhookEvent.postback.payload;
-          await handlePostback(senderPsid, payload, pageToken);
-          continue;
-        }
-
-        // 1. Handling Attachments (Images, Audio, PDF Documents)
+        // 1. Handling Attachments (Images, Audio)
         if (webhookEvent.message && webhookEvent.message.attachments) {
           const attachment = webhookEvent.message.attachments[0];
 
-          // Image Vision Analysis
           if (attachment.type === 'image') {
+            await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
             await sendTextMessage(senderPsid, "👁️ Sinu-suri ko ang iyong larawan...", PAGE_ACCESS_TOKEN);
             const visionReply = await analyzeImageWithGemini(attachment.payload.url, getRandomApiKey(apiKeys));
             await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
           }
 
-          // Voice Message / Speech-to-Text
           if (attachment.type === 'audio') {
+            await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
             await sendTextMessage(senderPsid, "🎙️ Pinakikinggan ko ang audio message...", PAGE_ACCESS_TOKEN);
             const text = await transcribeAudio(attachment.payload.url);
             if (text) {
@@ -54,54 +48,87 @@ export default async function handler(req, res) {
             } else {
               await sendTextMessage(senderPsid, "Pasensya na, hindi ko naintindihan ang boses sa audio.", PAGE_ACCESS_TOKEN);
             }
-            continue;
-          }
-
-          // File / PDF Summarizer
-          if (attachment.type === 'file') {
-            await sendTextMessage(senderPsid, "📄 Binabasa ko ang dokumento...", PAGE_ACCESS_TOKEN);
-            await sendTextMessage(senderPsid, "Natanggap ko ang file. Anong partikular na impormasyon ang gusto mong malaman dito?", PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
           }
         }
 
-        // 2. Handling Regular Text Messages
+        // 2. Handling Text Messages & Commands
         if (webhookEvent.message && webhookEvent.message.text && !webhookEvent.message.is_echo) {
-          const userMessage = webhookEvent.message.text;
+          const userMessage = webhookEvent.message.text.trim();
           const lowerText = userMessage.toLowerCase();
 
-          // Image Generation Command
-          if (lowerText.includes('generate image') || lowerText.includes('gumawa ng larawan') || lowerText.startsWith('image:')) {
-            const prompt = userMessage.replace(/(generate image|gumawa ng larawan|image:)/gi, '').trim();
-            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt || 'abstract art')}?width=1024&height=1024&nologo=true`;
-            await sendTextMessage(senderPsid, `🎨 Ginagawa ang larawan: "${prompt}"...`, PAGE_ACCESS_TOKEN);
-            await sendMediaAttachment(senderPsid, 'image', imageUrl, PAGE_ACCESS_TOKEN);
+          // I-trigger ang typing animation habang nagpoproseso ang server
+          await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+
+          // Check Active User Mode from Vercel KV
+          let userMode = null;
+          try {
+            userMode = await kv.get(`user_mode_${senderPsid}`);
+          } catch (e) {
+            console.error("KV Mode Read Error:", e);
+          }
+
+          // COMMAND: Exit / Cancel Command Mode
+          if (lowerText === '/exit' || lowerText === '/cancel') {
+            await kv.del(`user_mode_${senderPsid}`);
+            await sendTextMessage(senderPsid, "🔄 **Naka-exit ka na sa special mode.** Babalik na tayo sa normal na kwentuhan!", PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
           }
 
-          // Music Search Command
-          if (lowerText.includes('kanta') || lowerText.includes('patugtog') || lowerText.includes('music')) {
-            const query = userMessage.replace(/(pa-music|patugtog|kanta ng|song|music)/gi, '').trim();
+          // COMMAND: /imagen - Activate Image Generation Mode
+          if (lowerText === '/imagen') {
+            await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 300 }); // Expires in 5 mins
+            await sendTextMessage(
+              senderPsid,
+              "🎨 **Image Generation Mode Activated!**\n\nI-type at i-send mo lang ang detalye o prompt ng larawan na gusto mong ipagawa (halimbawa: *Spiderman mask in high quality*).\n\n💡 *Note: Pagkatapos nitong gumawa ng isang larawan, kusa itong babalik sa normal mode. I-type ang /cancel kung ayaw mo nang ituloy.*",
+              PAGE_ACCESS_TOKEN
+            );
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+            continue;
+          }
+
+          // IF USER IS CURRENTLY IN IMAGE MODE
+          if (userMode === 'IMAGE_MODE') {
+            await kv.del(`user_mode_${senderPsid}`);
+
+            await sendTextMessage(senderPsid, `🖼️ **Ginagawa ang iyong larawan para sa:**\n"${userMessage}"...\n\nSandali lamang po!`, PAGE_ACCESS_TOKEN);
+            
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(userMessage)}?width=1024&height=1024&nologo=true`;
+            await sendMediaAttachment(senderPsid, 'image', imageUrl, PAGE_ACCESS_TOKEN);
+            
+            await sendTextMessage(senderPsid, "✅ **Tapos na ang pag-generate!** Nabalik ka na sa Normal Chat Mode. I-type ulit ang **/imagen** kung gusto mong magpa-generate ng panibagong larawan.", PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+            continue;
+          }
+
+          // COMMAND: Music Command
+          if (lowerText.startsWith('/music ') || lowerText.startsWith('/kanta ')) {
+            const query = userMessage.replace(/(\/music|\/kanta)/gi, '').trim();
             const track = await searchMusic(query);
             if (track) {
-              await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Link: ${track.trackViewUrl}`, PAGE_ACCESS_TOKEN);
+              await sendTextMessage(senderPsid, `🎵 **${track.trackName}** - ${track.artistName}\n🔗 Full Track: ${track.trackViewUrl}`, PAGE_ACCESS_TOKEN);
               if (track.previewUrl) {
                 await sendMediaAttachment(senderPsid, 'audio', track.previewUrl, PAGE_ACCESS_TOKEN);
               }
+              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
               continue;
             }
           }
 
-          // TTS / Voice Response Request
+          // COMMAND: Text-To-Speech (/voice)
           if (lowerText.startsWith('/voice ') || lowerText.startsWith('/speak ')) {
             const textToSpeak = userMessage.replace(/(\/voice|\/speak)/gi, '').trim();
             const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textToSpeak)}&tl=tl&client=tw-ob`;
             await sendMediaAttachment(senderPsid, 'audio', ttsUrl, PAGE_ACCESS_TOKEN);
+            await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
             continue;
           }
 
-          // Default: Gemini AI Processing with Chat Memory
+          // DEFAULT: Normal AI Conversation with Gemini & Memory
           await processAIWithMemory(senderPsid, userMessage, apiKeys, PAGE_ACCESS_TOKEN);
+          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
         }
       }
       return res.status(200).send('EVENT_RECEIVED');
@@ -112,7 +139,7 @@ export default async function handler(req, res) {
   res.status(405).send('Method Not Allowed');
 }
 
-// Process AI using Conversation Memory (Vercel KV)
+// Conversation Memory Handling
 async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) {
   let history = [];
   try {
@@ -123,16 +150,15 @@ async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) 
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
 
-  // Keep last 10 messages for context
   if (history.length > 10) history = history.slice(-10);
 
   const selectedApiKey = getRandomApiKey(apiKeys);
   const aiReply = await getGeminiResponseWithHistory(history, selectedApiKey);
 
   history.push({ role: 'model', parts: [{ text: aiReply }] });
-  
+
   try {
-    await kv.set(`chat_history_${senderPsid}`, history, { ex: 86400 }); // Expire after 24 hrs
+    await kv.set(`chat_history_${senderPsid}`, history, { ex: 86400 });
   } catch (e) {
     console.error("KV Save error:", e);
   }
@@ -145,7 +171,6 @@ function getRandomApiKey(keysList) {
   return keysList[Math.floor(Math.random() * keysList.length)];
 }
 
-// Gemini Multi-turn Chat
 async function getGeminiResponseWithHistory(history, apiKey) {
   if (!apiKey) return 'Error: Walang na-detect na Gemini API Key.';
 
@@ -156,9 +181,9 @@ async function getGeminiResponseWithHistory(history, apiKey) {
       body: JSON.stringify({
         system_instruction: {
           parts: [{
-            text: "You are 'JepongDevxyz AI', created by Jay-Ar Lee Espiritu. " +
-                  "CAPABILITIES: You are an expert AI with chat memory, vision analysis, music search, code generation, and link capabilities. " +
-                  "LANGUAGE: Automatically reply in the user's preferred language (Tagalog, Taglish, English, etc.)."
+            text: "You are 'JepongDevxyz AI', an AI assistant created by Jay-Ar Lee Espiritu. " +
+                  "Identity: Always identify as JepongDevxyz AI created by Jay-Ar Lee Espiritu. " +
+                  "Language: Detect user language automatically and reply in that EXACT language naturally."
           }]
         },
         contents: history
@@ -172,7 +197,6 @@ async function getGeminiResponseWithHistory(history, apiKey) {
   }
 }
 
-// Vision Analysis (Image Reading)
 async function analyzeImageWithGemini(imageUrl, apiKey) {
   try {
     const imgRes = await fetch(imageUrl);
@@ -185,7 +209,7 @@ async function analyzeImageWithGemini(imageUrl, apiKey) {
       body: JSON.stringify({
         contents: [{
           parts: [
-            { text: "Ipaliwanag at suriin ang larawang ito nang detalyado sa wikang Tagalog/English:" },
+            { text: "Ipaliwanag at suriin ang larawang ito sa Tagalog/English:" },
             { inline_data: { mime_type: "image/jpeg", data: base64Data } }
           ]
         }]
@@ -195,11 +219,10 @@ async function analyzeImageWithGemini(imageUrl, apiKey) {
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Hindi ko mabasa ang larawan.';
   } catch (e) {
-    return 'Nagkaroon ng error sa pag-proseo ng larawan.';
+    return 'Error sa pag-proseso ng larawan.';
   }
 }
 
-// iTunes Search
 async function searchMusic(query) {
   try {
     const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&limit=1&media=music`);
@@ -210,7 +233,6 @@ async function searchMusic(query) {
   }
 }
 
-// Whisper Speech-to-Text
 async function transcribeAudio(audioUrl) {
   try {
     const audioRes = await fetch(audioUrl);
@@ -226,7 +248,28 @@ async function transcribeAudio(audioUrl) {
   }
 }
 
-// Messenger Helpers
+async function sendTypingOn(senderPsid, pageToken) {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: senderPsid },
+      sender_action: "typing_on"
+    })
+  });
+}
+
+async function sendTypingOff(senderPsid, pageToken) {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: senderPsid },
+      sender_action: "typing_off"
+    })
+  });
+}
+
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
   await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
