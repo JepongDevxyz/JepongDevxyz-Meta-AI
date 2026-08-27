@@ -1,8 +1,12 @@
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  
+  // Kukunin ang listahan ng API keys at gagawing array
+  const rawKeys = process.env.GEMINI_API_KEYS || '';
+  const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
+  // 1. Webhook Verification (GET Request mula sa Meta)
   if (req.method === 'GET') {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -15,6 +19,7 @@ export default async function handler(req, res) {
     }
   }
 
+  // 2. Incoming Messages (POST Request)
   if (req.method === 'POST') {
     const body = req.body;
 
@@ -25,7 +30,11 @@ export default async function handler(req, res) {
 
         if (webhookEvent.message && webhookEvent.message.text && !webhookEvent.message.is_echo) {
           const userMessage = webhookEvent.message.text;
-          const aiReply = await getGeminiResponse(userMessage, GEMINI_API_KEY);
+          
+          // Pipili ng random key sa listahan ng API keys
+          const selectedApiKey = getRandomApiKey(apiKeys);
+          
+          const aiReply = await getGeminiResponse(userMessage, selectedApiKey);
           await sendTextMessage(senderPsid, aiReply, PAGE_ACCESS_TOKEN);
         }
       }
@@ -38,7 +47,18 @@ export default async function handler(req, res) {
   res.status(405).send('Method Not Allowed');
 }
 
+// Function para pumili ng random API Key
+function getRandomApiKey(keysList) {
+  if (!keysList || keysList.length === 0) return null;
+  const randomIndex = Math.floor(Math.random() * keysList.length);
+  return keysList[randomIndex];
+}
+
 async function getGeminiResponse(userPrompt, apiKey) {
+  if (!apiKey) {
+    return 'Error: Walang na-detect na Gemini API Key.';
+  }
+
   try {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
