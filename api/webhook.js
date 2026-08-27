@@ -18,21 +18,25 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    res.status(200).send('EVENT_RECEIVED');
-
     const body = req.body;
-    if (body.object === 'page') {
-      for (const entry of body.entry) {
-        const webhookEvent = entry.messaging[0];
-        const senderPsid = webhookEvent.sender.id;
 
-        try {
+    if (body.object === 'page') {
+      try {
+        for (const entry of body.entry) {
+          if (!entry.messaging || !entry.messaging[0]) continue;
+          
+          const webhookEvent = entry.messaging[0];
+          const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
+          if (!senderPsid) continue;
+
+          // 1. Handle Postback
           if (webhookEvent.postback) {
             const payload = webhookEvent.postback.payload;
             await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN);
             continue;
           }
 
+          // 2. Handle Attachments (Image, Video, etc.)
           if (webhookEvent.message && webhookEvent.message.attachments) {
             const attachment = webhookEvent.message.attachments[0];
 
@@ -44,8 +48,14 @@ export default async function handler(req, res) {
               await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
               continue;
             }
+
+            if (attachment.type === 'video') {
+              await sendTextMessage(senderPsid, "🎥 Pasensya na! Sa ngayon ay mga larawan at text pa lamang ang kaya kong suriin.", PAGE_ACCESS_TOKEN);
+              continue;
+            }
           }
 
+          // 3. Handle Normal Text / Commands
           if (webhookEvent.message && !webhookEvent.message.is_echo) {
             const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
             const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
@@ -53,7 +63,7 @@ export default async function handler(req, res) {
 
             if (!finalMessage) continue;
 
-            // Smart Periodic Table Keyword Trigger
+            // Smart Periodic Table
             if (finalMessage.toLowerCase().includes('periodic table')) {
               await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
               await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
@@ -82,15 +92,19 @@ export default async function handler(req, res) {
             // Default AI Chat
             await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
           }
-        } catch (err) {
-          console.error("Error processing event:", err);
         }
+      } catch (err) {
+        console.error("Error processing webhook event:", err);
       }
+
+      // 🛑 DITO NA ILALAGAY ANG RESPONSE (Pagkatapos mag-process ng lahat)
+      return res.status(200).send('EVENT_RECEIVED');
     }
-    return;
+
+    return res.status(404).send('Not Found');
   }
 
-  res.status(405).send('Method Not Allowed');
+  return res.status(405).send('Method Not Allowed');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
@@ -142,7 +156,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 📈 Visual Math Graph (BAGO!)
+  // 📈 Visual Math Graph
   if (lowerText.startsWith('/graph ')) {
     await sendTypingOn(senderPsid, pageToken);
     const mathEq = input.replace(/^\/graph\s*/i, '').trim();
@@ -183,7 +197,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 📚 Citation Generator (BAGO!)
+  // 📚 Citation Generator
   if (lowerText.startsWith('/cite ')) {
     await sendTypingOn(senderPsid, pageToken);
     const citeDetails = input.replace(/^\/cite\s*/i, '').trim();
@@ -193,7 +207,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 🎴 Flashcards Generator (BAGO!)
+  // 🎴 Flashcards Generator
   if (lowerText.startsWith('/flashcards ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/flashcards\s*/i, '').trim();
@@ -203,7 +217,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 💻 Code Assistant (BAGO!)
+  // 💻 Code Assistant
   if (lowerText.startsWith('/code ')) {
     await sendTypingOn(senderPsid, pageToken);
     const codeQuery = input.replace(/^\/code\s*/i, '').trim();
@@ -213,7 +227,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 🌐 Link / Text Summarizer (BAGO!)
+  // 🌐 Link / Text Summarizer
   if (lowerText.startsWith('/summarize ')) {
     await sendTypingOn(senderPsid, pageToken);
     const content = input.replace(/^\/summarize\s*/i, '').trim();
@@ -223,7 +237,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // ❓ Interactive Quiz (BAGO!)
+  // ❓ Interactive Quiz
   if (lowerText.startsWith('/quiz ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/quiz\s*/i, '').trim();
@@ -399,7 +413,7 @@ async function getGeminiResponseWithHistory(history, apiKey, senderPsid) {
   try {
     const systemInstructionText = await getSystemInstructionForUser(senderPsid);
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
