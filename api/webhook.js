@@ -1,14 +1,12 @@
 import { kv } from '@vercel/kv';
 
-// Sequence ng fallback models
+// Priority order ng models
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.7-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
   'gemini-3.5-flash-lite'
 ];
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -31,83 +29,89 @@ export default async function handler(req, res) {
     const body = req.body;
 
     if (body.object === 'page') {
-      try {
-        for (const entry of body.entry) {
-          if (!entry.messaging || !entry.messaging[0]) continue;
-          
-          const webhookEvent = entry.messaging[0];
-          const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
-          if (!senderPsid) continue;
+      // 🚀 SPEED OPTIMIZATION 1: Sumagot agad ng 200 OK sa Facebook
+      res.status(200).send('EVENT_RECEIVED');
 
-          // 1. Handle Postback
-          if (webhookEvent.postback) {
-            const payload = webhookEvent.postback.payload;
-            await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN);
-            continue;
+      // 🔄 ASYNC BACKGROUND PROCESSING: I-process ang messaging events pagkasagot sa FB
+      (async () => {
+        try {
+          for (const entry of body.entry) {
+            if (!entry.messaging || !entry.messaging[0]) continue;
+            
+            const webhookEvent = entry.messaging[0];
+            const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
+            if (!senderPsid) continue;
+
+            // 1. Handle Postback
+            if (webhookEvent.postback) {
+              const payload = webhookEvent.postback.payload;
+              await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN);
+              continue;
+            }
+
+            // 2. Handle Attachments (Image, Video, etc.)
+            if (webhookEvent.message && webhookEvent.message.attachments) {
+              const attachment = webhookEvent.message.attachments[0];
+
+              if (attachment.type === 'image') {
+                await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+                await sendTextMessage(senderPsid, "📖 Sinu-suri ko ang iyong larawan... ✨", PAGE_ACCESS_TOKEN);
+                const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, apiKeys, senderPsid);
+                await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
+                await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+                continue;
+              }
+
+              if (attachment.type === 'video') {
+                await sendTextMessage(senderPsid, "🎥 Pasensya na! Sa ngayon ay mga larawan at text pa lamang ang kaya kong suriin.", PAGE_ACCESS_TOKEN);
+                continue;
+              }
+            }
+
+            // 3. Handle Normal Text / Commands
+            if (webhookEvent.message && !webhookEvent.message.is_echo) {
+              const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
+              const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
+              const finalMessage = quickReplyPayload || userMessage;
+
+              if (!finalMessage) continue;
+
+              // Smart Periodic Table
+              if (finalMessage.toLowerCase().includes('periodic table')) {
+                await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
+                await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
+                continue;
+              }
+
+              let userMode = null;
+              try {
+                userMode = await kv.get(`user_mode_${senderPsid}`);
+              } catch (e) {}
+
+              if (userMode === 'IMAGE_MODE') {
+                await kv.del(`user_mode_${senderPsid}`);
+                await generateAndSendImage(senderPsid, finalMessage, PAGE_ACCESS_TOKEN);
+                continue;
+              }
+
+              const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+              if (handled) continue;
+
+              if (userMode === 'TALK_MODE') {
+                await handleEnglishTalkMode(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+                continue;
+              }
+
+              // Default AI Chat
+              await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+            }
           }
-
-          // 2. Handle Attachments (Image, Video, etc.)
-          if (webhookEvent.message && webhookEvent.message.attachments) {
-            const attachment = webhookEvent.message.attachments[0];
-
-            if (attachment.type === 'image') {
-              await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-              await sendTextMessage(senderPsid, "📖 Sinu-suri ko ang iyong larawan... ✨", PAGE_ACCESS_TOKEN);
-              const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, apiKeys, senderPsid);
-              await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
-              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-              continue;
-            }
-
-            if (attachment.type === 'video') {
-              await sendTextMessage(senderPsid, "🎥 Pasensya na! Sa ngayon ay mga larawan at text pa lamang ang kaya kong suriin.", PAGE_ACCESS_TOKEN);
-              continue;
-            }
-          }
-
-          // 3. Handle Normal Text / Commands
-          if (webhookEvent.message && !webhookEvent.message.is_echo) {
-            const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
-            const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
-            const finalMessage = quickReplyPayload || userMessage;
-
-            if (!finalMessage) continue;
-
-            // Smart Periodic Table
-            if (finalMessage.toLowerCase().includes('periodic table')) {
-              await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
-              await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
-              continue;
-            }
-
-            let userMode = null;
-            try {
-              userMode = await kv.get(`user_mode_${senderPsid}`);
-            } catch (e) {}
-
-            if (userMode === 'IMAGE_MODE') {
-              await kv.del(`user_mode_${senderPsid}`);
-              await generateAndSendImage(senderPsid, finalMessage, PAGE_ACCESS_TOKEN);
-              continue;
-            }
-
-            const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-            if (handled) continue;
-
-            if (userMode === 'TALK_MODE') {
-              await handleEnglishTalkMode(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-              continue;
-            }
-
-            // Default AI Chat
-            await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-          }
+        } catch (err) {
+          console.error("Async Background Processing Error:", err);
         }
-      } catch (err) {
-        console.error("Error processing webhook event:", err);
-      }
+      })();
 
-      return res.status(200).send('EVENT_RECEIVED');
+      return;
     }
 
     return res.status(404).send('Not Found');
@@ -117,67 +121,45 @@ export default async function handler(req, res) {
 }
 
 /**
- * Core engine para sa Gemini API calls na may Retry at Fallback Loop
+ * 🚀 SPEED OPTIMIZATION 2: Fast-Fail Gemini Execution with Timeout Abort
  */
-async function callGeminiApiWithFallback(payload, apiKeys, maxRetriesPerModel = 2) {
-  if (!apiKeys || apiKeys.length === 0) {
-    throw new Error('Walang API Key na ma-detect.');
-  }
+async function callGeminiApiWithFallback(payload, apiKeys, timeoutMs = 6000) {
+  if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na ma-detect.');
 
   let lastError = null;
 
   for (const modelName of GEMINI_MODELS_FALLBACK) {
-    for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
-      try {
-        const apiKey = getRandomApiKey(apiKeys);
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    const apiKey = getRandomApiKey(apiKeys);
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        const data = await response.json();
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
 
-        if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-          return data.candidates[0].content.parts[0].text;
-        }
+      clearTimeout(timer);
+      const data = await response.json();
 
-        // Capture Error Status o Error Message
-        const status = response.status;
-        const errorMessage = data.error?.message || response.statusText;
-        lastError = new Error(`HTTP ${status}: ${errorMessage}`);
-
-        const isTemporaryError = 
-          status === 503 || 
-          status === 429 || 
-          errorMessage.includes('503') || 
-          errorMessage.includes('429') ||
-          errorMessage.includes('UNAVAILABLE') ||
-          errorMessage.includes('RESOURCE_EXHAUSTED');
-
-        console.warn(`[${modelName}] Attempt ${attempt} failed. Status: ${status}`);
-
-        if (isTemporaryError && attempt < maxRetriesPerModel) {
-          const delayMs = Math.pow(2, attempt - 1) * 1000;
-          await sleep(delayMs);
-        } else {
-          // Kung hindi na kakayanin sa retry, lumipat sa kasunod na model
-          break;
-        }
-      } catch (err) {
-        lastError = err;
-        console.warn(`[${modelName}] Attempt ${attempt} network error: ${err.message}`);
-        
-        if (attempt < maxRetriesPerModel) {
-          await sleep(Math.pow(2, attempt - 1) * 1000);
-        }
+      if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        return data.candidates[0].content.parts[0].text;
       }
+
+      console.warn(`[${modelName}] Nag-fail (Status: ${response.status}). Lilipat agad sa kasunod...`);
+    } catch (err) {
+      clearTimeout(timer);
+      const isAbort = err.name === 'AbortError';
+      console.warn(`[${modelName}] ${isAbort ? 'Timeout (6s)' : 'Error'}: ${err.message}. Fast-switching...`);
+      lastError = err;
     }
   }
 
-  throw lastError || new Error('Lahat ng Gemini models sa fallback chain ay hindi sumagot.');
+  throw lastError || new Error('Lahat ng fallback models ay hindi nagbigay ng sagot.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
@@ -423,11 +405,15 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 }
 
 async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) {
+  await sendTypingOn(senderPsid, pageToken);
+
   let history = [];
   try { history = (await kv.get(`chat_history_${senderPsid}`)) || []; } catch (e) {}
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
-  if (history.length > 8) history = history.slice(-8);
+  
+  // 🚀 SPEED OPTIMIZATION 3: Bawasan ang history length mula 8 pabalik sa 4 para mas mabilis i-process
+  if (history.length > 4) history = history.slice(-4);
 
   const aiReply = await getGeminiResponseWithHistory(history, apiKeys, senderPsid);
 
@@ -435,6 +421,7 @@ async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) 
   try { await kv.set(`chat_history_${senderPsid}`, history, { ex: 86400 }); } catch (e) {}
 
   await sendLongTextMessage(senderPsid, aiReply, pageToken);
+  await sendTypingOff(senderPsid, pageToken);
 }
 
 function getRandomApiKey(keysList) {
