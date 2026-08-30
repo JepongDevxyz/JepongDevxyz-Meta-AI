@@ -29,10 +29,10 @@ export default async function handler(req, res) {
     const body = req.body;
 
     if (body.object === 'page') {
-      // 🚀 SPEED OPTIMIZATION 1: Sumagot agad ng 200 OK sa Facebook
+      // 🚀 1. FAST HANDSHAKE: Sumagot agad sa Facebook bago mag-timeout
       res.status(200).send('EVENT_RECEIVED');
 
-      // 🔄 ASYNC BACKGROUND PROCESSING: I-process ang messaging events pagkasagot sa FB
+      // 🔄 2. ASYNC BACKGROUND PROCESS
       (async () => {
         try {
           for (const entry of body.entry) {
@@ -40,16 +40,33 @@ export default async function handler(req, res) {
             
             const webhookEvent = entry.messaging[0];
             const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
+            const messageId = webhookEvent.message ? webhookEvent.message.mid : null;
+
             if (!senderPsid) continue;
 
-            // 1. Handle Postback
+            // 🛑 3. MESSAGE DEDUPLICATION CHECK (Iwas doble response)
+            if (messageId) {
+              try {
+                const isProcessed = await kv.get(`processed_msg_${messageId}`);
+                if (isProcessed) {
+                  console.log(`[DEDUPLICATION] Na-process na ang message ID: ${messageId}`);
+                  continue;
+                }
+                // Markahan bilang processed sa loob ng 10 minuto (600s)
+                await kv.set(`processed_msg_${messageId}`, 'true', { ex: 600 });
+              } catch (kvErr) {
+                console.error("KV Deduplication Error:", kvErr);
+              }
+            }
+
+            // A. Handle Postback
             if (webhookEvent.postback) {
               const payload = webhookEvent.postback.payload;
               await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN);
               continue;
             }
 
-            // 2. Handle Attachments (Image, Video, etc.)
+            // B. Handle Attachments (Image, Video, etc.)
             if (webhookEvent.message && webhookEvent.message.attachments) {
               const attachment = webhookEvent.message.attachments[0];
 
@@ -68,7 +85,7 @@ export default async function handler(req, res) {
               }
             }
 
-            // 3. Handle Normal Text / Commands
+            // C. Handle Normal Text / Commands
             if (webhookEvent.message && !webhookEvent.message.is_echo) {
               const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
               const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
@@ -102,7 +119,7 @@ export default async function handler(req, res) {
                 continue;
               }
 
-              // Default AI Chat
+              // Default AI Chat (May Google Search Grounding)
               await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
             }
           }
@@ -121,10 +138,18 @@ export default async function handler(req, res) {
 }
 
 /**
- * 🚀 SPEED OPTIMIZATION 2: Fast-Fail Gemini Execution with Timeout Abort
+ * 🔍 FAST-FAIL GEMINI ENGINE + GOOGLE SEARCH GROUNDING
  */
-async function callGeminiApiWithFallback(payload, apiKeys, timeoutMs = 6000) {
+async function callGeminiApiWithFallback(payload, apiKeys, timeoutMs = 7000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na ma-detect.');
+
+  // 🌐 Magdagdag ng Google Search Tool para sa Real-time Data (Weather, News, Live Search)
+  const payloadWithSearch = {
+    ...payload,
+    tools: [
+      { google_search: {} }
+    ]
+  };
 
   let lastError = null;
 
@@ -139,7 +164,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, timeoutMs = 6000) {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloadWithSearch),
         signal: controller.signal
       });
 
@@ -150,11 +175,11 @@ async function callGeminiApiWithFallback(payload, apiKeys, timeoutMs = 6000) {
         return data.candidates[0].content.parts[0].text;
       }
 
-      console.warn(`[${modelName}] Nag-fail (Status: ${response.status}). Lilipat agad sa kasunod...`);
+      console.warn(`[${modelName}] Nag-fail (Status: ${response.status}). Lilipat sa kasunod...`);
     } catch (err) {
       clearTimeout(timer);
       const isAbort = err.name === 'AbortError';
-      console.warn(`[${modelName}] ${isAbort ? 'Timeout (6s)' : 'Error'}: ${err.message}. Fast-switching...`);
+      console.warn(`[${modelName}] ${isAbort ? 'Timeout (7s)' : 'Error'}: ${err.message}. Fast-switching...`);
       lastError = err;
     }
   }
@@ -412,7 +437,6 @@ async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) 
 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
   
-  // 🚀 SPEED OPTIMIZATION 3: Bawasan ang history length mula 8 pabalik sa 4 para mas mabilis i-process
   if (history.length > 4) history = history.slice(-4);
 
   const aiReply = await getGeminiResponseWithHistory(history, apiKeys, senderPsid);
@@ -433,7 +457,7 @@ async function getSystemInstructionForUser(senderPsid) {
   let userLang = null;
   try { userLang = await kv.get(`user_lang_${senderPsid}`); } catch (e) {}
 
-  let baseInstruction = "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Helpful student tutor. ";
+  let baseInstruction = "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Helpful student tutor. You now have live Google Search access enabled, so you can fetch real-time weather, news, facts, and live information when requested. ";
 
   if (userLang === 'ENGLISH') {
     return baseInstruction + "STRICT RULE: Respond strictly in English language ONLY. Even if the user talks in Tagalog, respond only in English.";
