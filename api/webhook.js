@@ -1,6 +1,4 @@
-import { kv } from '@vercel/kv';
-
-// Reliable models for fallback
+// Reliable models for production API calls
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.7-flash',
   'gemini-3.6-flash',
@@ -9,10 +7,13 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-2.5-flash'
 ];
 
+// 🧠 IN-MEMORY DEDUPLICATION CACHE (Walang bayad, ginagamit ang RAM ng serverless instance)
+const processedMessageIds = new Set();
+
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-  const ADMIN_PSID = process.env.ADMIN_PSID; // Ang iyong Facebook Sender ID
+  const ADMIN_PSID = process.env.ADMIN_PSID;
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
@@ -31,7 +32,7 @@ export default async function handler(req, res) {
     const body = req.body;
 
     if (body.object === 'page') {
-      // 🚀 1. FAST HANDSHAKE (Sumagot agad sa FB sa loob ng 1s)
+      // 🚀 1. INSTANT HANDSHAKE (Pinipigilan ang Facebook Retry/Duplicate)
       res.status(200).send('EVENT_RECEIVED');
 
       // 🔄 2. ASYNC BACKGROUND PROCESS
@@ -46,19 +47,17 @@ export default async function handler(req, res) {
 
             if (!senderPsid) continue;
 
-            // 🛑 3. MESSAGE DEDUPLICATION CHECK
+            // 🛑 IN-MEMORY DEDUPLICATION CHECK (Inaalis ang parehong message ID)
             if (messageId) {
-              try {
-                const isProcessed = await kv.get(`processed_msg_${messageId}`);
-                if (isProcessed) continue;
-                await kv.set(`processed_msg_${messageId}`, 'true', { ex: 600 });
-              } catch (kvErr) {
-                console.error("KV Deduplication Error:", kvErr);
+              if (processedMessageIds.has(messageId)) {
+                console.log(`[DEDUPLICATION] Inilagpasan ang duplicate Message ID: ${messageId}`);
+                continue;
               }
+              processedMessageIds.add(messageId);
+              
+              // Linisin ang memory paglipas ng ilang sandali para hindi mapuno
+              setTimeout(() => processedMessageIds.delete(messageId), 300000);
             }
-
-            // Track Total Messages for Admin Analytics (/stats)
-            try { await kv.incr('analytics_total_messages'); } catch (e) {}
 
             // A. Postback Actions
             if (webhookEvent.postback) {
@@ -71,7 +70,7 @@ export default async function handler(req, res) {
             if (webhookEvent.message && webhookEvent.message.attachments) {
               const attachment = webhookEvent.message.attachments[0];
 
-              // 🎙️ Feature 1: Speech-to-Text / Audio Voice Transcriber
+              // 🎙️ Speech-to-Text / Audio Voice Transcriber
               if (attachment.type === 'audio') {
                 await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
                 await sendTextMessage(senderPsid, "🎙️ **Pinapakinggan at isinalasalin ang boses...** ✨", PAGE_ACCESS_TOKEN);
@@ -81,7 +80,7 @@ export default async function handler(req, res) {
                 continue;
               }
 
-              // 📖 Feature 2: Image & Vision Analyzer
+              // 📖 Image & Vision Analyzer
               if (attachment.type === 'image') {
                 await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
                 await sendTextMessage(senderPsid, "📖 **Sinu-suri ang iyong larawan...** ✨", PAGE_ACCESS_TOKEN);
@@ -91,7 +90,7 @@ export default async function handler(req, res) {
                 continue;
               }
 
-              // 📑 Feature 3: Document / PDF Summarizer
+              // 📑 Document / PDF Summarizer
               if (attachment.type === 'file') {
                 await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
                 await sendTextMessage(senderPsid, "📑 **Binabasa at pino-process ang dokumento...** ✨", PAGE_ACCESS_TOKEN);
@@ -110,20 +109,10 @@ export default async function handler(req, res) {
 
               if (!finalMessage) continue;
 
-              // Smart Periodic Table Command
+              // Periodic Table Command
               if (finalMessage.toLowerCase().includes('periodic table')) {
                 await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
                 await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
-                continue;
-              }
-
-              let userMode = null;
-              try { userMode = await kv.get(`user_mode_${senderPsid}`); } catch (e) {}
-
-              // Image Generator Input Mode
-              if (userMode === 'IMAGE_MODE') {
-                await kv.del(`user_mode_${senderPsid}`);
-                await generateAndSendImage(senderPsid, finalMessage, PAGE_ACCESS_TOKEN);
                 continue;
               }
 
@@ -131,15 +120,9 @@ export default async function handler(req, res) {
               const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
               if (handled) continue;
 
-              if (userMode === 'TALK_MODE') {
-                await handleEnglishTalkMode(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-                continue;
-              }
-
-              // 💡 INSTANT INDICATOR: Smart Status Notice
               await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
 
-              // 🔗 Feature 4: Web URL Auto-Detect Summarizer
+              // 🔗 Web URL Auto-Detect Summarizer
               if (/https?:\/\/[^\s]+/i.test(finalMessage)) {
                 await sendTextMessage(senderPsid, "🔗 *Binabasa ang nilalaman ng link...*", PAGE_ACCESS_TOKEN);
                 await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
@@ -149,15 +132,11 @@ export default async function handler(req, res) {
                 continue;
               }
 
-              // Google Search Grounding Check
+              // Live Web Grounding Search Condition
               const isRealtimeQuery = /weather|panahon|balita|news|ngayon|score|presyo|sino si|kailan|update/i.test(finalMessage);
-              if (isRealtimeQuery) {
-                await sendTextMessage(senderPsid, "🔍 *Naghahanap ng live update sa web...*", PAGE_ACCESS_TOKEN);
-                await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-              }
 
-              // Default AI Memory Chat
-              await processAIWithMemory(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, isRealtimeQuery);
+              // Direct AI Processing
+              await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, isRealtimeQuery);
             }
           }
         } catch (err) {
@@ -175,14 +154,15 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ FAST GEMINI FALLBACK ENGINE
+ * ⚡ FAST GEMINI FALLBACK ENGINE (WITH CORRECT SEARCH GROUNDING SYNTAX)
  */
-async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, timeoutMs = 3500) {
+async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, timeoutMs = 4500) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na ma-detect.');
 
-  const requestBody = { ...payload };
+  const requestBody = JSON.parse(JSON.stringify(payload));
+  
   if (enableSearch) {
-    requestBody.tools = [{ google_search: {} }];
+    requestBody.tools = [{ googleSearch: {} }];
   }
 
   let lastError = null;
@@ -220,47 +200,21 @@ async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false,
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
   const lowerText = input.toLowerCase().trim();
 
-  // 📊 Feature 5: Admin Dashboard Commands
+  // Admin Dashboard Command
   if (['/stats', '/admin'].includes(lowerText)) {
     if (senderPsid !== adminPsid) {
       await sendTextMessage(senderPsid, "🚫 **Access Denied!** Para sa Admin lamang ang command na ito.", pageToken);
       return true;
     }
-    const totalMsgs = (await kv.get('analytics_total_messages')) || 0;
-    const statsMsg = `📊 **JepongDevxyz AI Dashboard**\n\n` +
-                     `• Total Messages Processed: **${totalMsgs}**\n` +
+    const statsMsg = `📊 **JepongDevxyz AI Status**\n\n` +
                      `• Active Gemini Keys: **${apiKeys.length}**\n` +
+                     `• Deduplication Memory: **Active 🟢**\n` +
                      `• System Status: **Operational 🟢**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
 
-  // Language Commands
-  if (['/english', '/eng'].includes(lowerText)) {
-    try { await kv.set(`user_lang_${senderPsid}`, 'ENGLISH'); } catch (e) {}
-    await sendTextMessage(senderPsid, "🔤 **Language set to English!**", pageToken);
-    return true;
-  }
-
-  if (['/tagalog', '/filipino', '/tag'].includes(lowerText)) {
-    try { await kv.set(`user_lang_${senderPsid}`, 'TAGALOG'); } catch (e) {}
-    await sendTextMessage(senderPsid, "🇵🇭 **Naka-set na sa Tagalog/Filipino!**", pageToken);
-    return true;
-  }
-
-  if (['/auto', '/autolang'].includes(lowerText)) {
-    try { await kv.del(`user_lang_${senderPsid}`); } catch (e) {}
-    await sendTextMessage(senderPsid, "🤖 **Smart Auto-Detect Enabled!**", pageToken);
-    return true;
-  }
-
   // Media Commands
-  if (['/imagen', 'cmd_imagen'].includes(lowerText)) {
-    try { await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 600 }); } catch (e) {}
-    await sendTextMessage(senderPsid, "🎨 **Image Generator Mode!** I-type ang i-ge-generate na larawan.", pageToken);
-    return true;
-  }
-
   if (lowerText.startsWith('/imagen ')) {
     const prompt = input.replace(/^\/imagen\s*/i, '').trim();
     if (prompt) await generateAndSendImage(senderPsid, prompt, pageToken);
@@ -286,7 +240,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     return true;
   }
 
-  // 🎮 Feature 6: Interactive Quiz Game with Quick Replies
+  // Interactive Quiz Game
   if (lowerText.startsWith('/quiz ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/quiz\s*/i, '').trim();
@@ -307,43 +261,30 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const helpMsg = 
       "📚 **JepongDevxyz AI Help & Features**\n\n" +
-      "🌐 **Languages:** `/english`, `/tagalog`, `/auto`\n" +
       "🎨 **Media:** `/imagen [prompt]`, Voice Input, Image OCR\n" +
       "🎓 **Study:** `/math [prob]`, `/code [task]`, `/quiz [topic]`, PDF Files\n" +
       "🔗 **Web Links:** Mag-send ng URL link para i-summarize\n" +
-      "🗣️ **Practice:** `/talk` English tutor mode\n" +
-      "🧹 **System:** `/clear` to reset memory";
+      "⚡ **Status:** Direct & Instant AI Responses";
     await sendTextMessage(senderPsid, helpMsg, pageToken);
     await sendTypingOff(senderPsid, pageToken);
-    return true;
-  }
-
-  if (['/stop', '/clear', '/delete', '/refresh', 'cmd_clear'].includes(lowerText)) {
-    try {
-      await kv.del(`chat_history_${senderPsid}`);
-      await kv.del(`user_mode_${senderPsid}`);
-      await kv.del(`user_lang_${senderPsid}`);
-    } catch (e) {}
-    await sendTextMessage(senderPsid, "✅ **Reset Done!** Malinis na ang conversation history.", pageToken);
     return true;
   }
 
   return false;
 }
 
-// 🎙️ Process Voice Messages using Gemini Multimodal
+// Process Voice Messages
 async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
   try {
     const audioRes = await fetch(audioUrl);
     const buffer = await audioRes.arrayBuffer();
     const base64Data = Buffer.from(buffer).toString("base64");
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
 
     const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Listen to this audio carefully, transcribe what was said, and then answer the user directly in Tagalog or English." }] },
       contents: [{
         parts: [
-          { text: "Listen to this audio carefully, transcribe what was said, and then answer the user's request directly:" },
+          { text: "Listen and respond:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
       }]
@@ -355,19 +296,18 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
   }
 }
 
-// 📑 Process PDF / Document Files
+// Process PDF / Document Files
 async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
   try {
     const fileRes = await fetch(fileUrl);
     const buffer = await fileRes.arrayBuffer();
     const base64Data = Buffer.from(buffer).toString("base64");
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
 
     const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Read and analyze this document file." }] },
       contents: [{
         parts: [
-          { text: "Read and analyze this document file. Give a detailed breakdown and key takeaways:" },
+          { text: "Read and summarize this document:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
       }]
@@ -379,12 +319,11 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
   }
 }
 
-// 🔗 Summarize Webpage Content
+// Summarize Webpage Content
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
     const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu." }] },
       contents: [{ parts: [{ text: `Read and summarize the key facts from this webpage link: ${url}` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, true, 5000);
@@ -405,19 +344,10 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
   }
 }
 
-async function handleEnglishTalkMode(senderPsid, userMessage, apiKeys, pageToken) {
-  await sendTypingOn(senderPsid, pageToken);
-  const prompt = `Act as an English tutor. Reply to: "${userMessage}". Gently fix grammar mistakes if any.`;
-  const tutorReply = await getDirectGeminiResponse(prompt, apiKeys, senderPsid);
-  await sendLongTextMessage(senderPsid, tutorReply, pageToken);
-  await sendTypingOff(senderPsid, pageToken);
-}
-
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
     const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Helpful student tutor." }] },
       contents: [{ parts: [{ text: promptText }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, false, 3500);
@@ -431,10 +361,9 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const imgRes = await fetch(imageUrl);
     const buffer = await imgRes.arrayBuffer();
     const base64Data = Buffer.from(buffer).toString("base64");
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
 
     const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu." }] },
       contents: [{
         parts: [
           { text: "Analyze this image in detail:" },
@@ -449,53 +378,25 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
-  let history = [];
-  try { history = (await kv.get(`chat_history_${senderPsid}`)) || []; } catch (e) {}
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
+  try {
+    const payload = {
+      system_instruction: { parts: [{ text: "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Helpful student tutor. Respond dynamically in the same language as the user (Tagalog/English)." }] },
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }]
+    };
 
-  history.push({ role: 'user', parts: [{ text: userMessage }] });
-  if (history.length > 4) history = history.slice(-4);
-
-  const aiReply = await getGeminiResponseWithHistory(history, apiKeys, senderPsid, enableSearch);
-
-  history.push({ role: 'model', parts: [{ text: aiReply }] });
-  try { await kv.set(`chat_history_${senderPsid}`, history, { ex: 86400 }); } catch (e) {}
-
-  await sendLongTextMessage(senderPsid, aiReply, pageToken);
-  await sendTypingOff(senderPsid, pageToken);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 4500);
+    await sendLongTextMessage(senderPsid, aiReply, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+  } catch (error) {
+    await sendTextMessage(senderPsid, "Medyo matagal sumagot ang AI server. Paki-subukan ulit sa sandali.", pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+  }
 }
 
 function getRandomApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   return keysList[Math.floor(Math.random() * keysList.length)];
-}
-
-async function getSystemInstructionForUser(senderPsid) {
-  let userLang = null;
-  try { userLang = await kv.get(`user_lang_${senderPsid}`); } catch (e) {}
-
-  let baseInstruction = "You are JepongDevxyz AI created by Jay-Ar Lee Espiritu. Helpful student tutor. ";
-
-  if (userLang === 'ENGLISH') {
-    return baseInstruction + "Respond strictly in English language.";
-  } else if (userLang === 'TAGALOG') {
-    return baseInstruction + "Respond strictly in Tagalog/Taglish.";
-  } else {
-    return baseInstruction + "Detect and respond in the same language as the user.";
-  }
-}
-
-async function getGeminiResponseWithHistory(history, apiKeys, senderPsid, enableSearch = false) {
-  try {
-    const systemInstructionText = await getSystemInstructionForUser(senderPsid);
-    const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history
-    };
-    return await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 3500);
-  } catch (error) {
-    return 'Medyo matagal sumagot ang AI server. Paki-subukan ulit sa sandali.';
-  }
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
