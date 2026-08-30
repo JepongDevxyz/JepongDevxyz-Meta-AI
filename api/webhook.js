@@ -1,5 +1,15 @@
 import { kv } from '@vercel/kv';
 
+// Sequence ng fallback models
+const GEMINI_MODELS_FALLBACK = [
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite'
+];
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
@@ -43,7 +53,7 @@ export default async function handler(req, res) {
             if (attachment.type === 'image') {
               await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
               await sendTextMessage(senderPsid, "📖 Sinu-suri ko ang iyong larawan... ✨", PAGE_ACCESS_TOKEN);
-              const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, getRandomApiKey(apiKeys), senderPsid);
+              const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, apiKeys, senderPsid);
               await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
               await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
               continue;
@@ -97,7 +107,6 @@ export default async function handler(req, res) {
         console.error("Error processing webhook event:", err);
       }
 
-      // 🛑 DITO NA ILALAGAY ANG RESPONSE (Pagkatapos mag-process ng lahat)
       return res.status(200).send('EVENT_RECEIVED');
     }
 
@@ -107,10 +116,73 @@ export default async function handler(req, res) {
   return res.status(405).send('Method Not Allowed');
 }
 
+/**
+ * Core engine para sa Gemini API calls na may Retry at Fallback Loop
+ */
+async function callGeminiApiWithFallback(payload, apiKeys, maxRetriesPerModel = 2) {
+  if (!apiKeys || apiKeys.length === 0) {
+    throw new Error('Walang API Key na ma-detect.');
+  }
+
+  let lastError = null;
+
+  for (const modelName of GEMINI_MODELS_FALLBACK) {
+    for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const apiKey = getRandomApiKey(apiKeys);
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+          return data.candidates[0].content.parts[0].text;
+        }
+
+        // Capture Error Status o Error Message
+        const status = response.status;
+        const errorMessage = data.error?.message || response.statusText;
+        lastError = new Error(`HTTP ${status}: ${errorMessage}`);
+
+        const isTemporaryError = 
+          status === 503 || 
+          status === 429 || 
+          errorMessage.includes('503') || 
+          errorMessage.includes('429') ||
+          errorMessage.includes('UNAVAILABLE') ||
+          errorMessage.includes('RESOURCE_EXHAUSTED');
+
+        console.warn(`[${modelName}] Attempt ${attempt} failed. Status: ${status}`);
+
+        if (isTemporaryError && attempt < maxRetriesPerModel) {
+          const delayMs = Math.pow(2, attempt - 1) * 1000;
+          await sleep(delayMs);
+        } else {
+          // Kung hindi na kakayanin sa retry, lumipat sa kasunod na model
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        console.warn(`[${modelName}] Attempt ${attempt} network error: ${err.message}`);
+        
+        if (attempt < maxRetriesPerModel) {
+          await sleep(Math.pow(2, attempt - 1) * 1000);
+        }
+      }
+    }
+  }
+
+  throw lastError || new Error('Lahat ng Gemini models sa fallback chain ay hindi sumagot.');
+}
+
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
   const lowerText = input.toLowerCase().trim();
 
-  // 🌐 Language Commands
   if (['/english', '/eng'].includes(lowerText)) {
     try { await kv.set(`user_lang_${senderPsid}`, 'ENGLISH'); } catch (e) {}
     await sendTextMessage(senderPsid, "🔤 **Language set to English!** I will respond strictly in English.", pageToken);
@@ -129,7 +201,6 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 🎨 Image Generator
   if (['/imagen', 'cmd_imagen'].includes(lowerText)) {
     await sendTypingOn(senderPsid, pageToken);
     try { await kv.set(`user_mode_${senderPsid}`, 'IMAGE_MODE', { ex: 600 }); } catch (e) {}
@@ -146,17 +217,15 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 🧮 Math Solver Command
   if (lowerText.startsWith('/math ')) {
     await sendTypingOn(senderPsid, pageToken);
     const mathProblem = input.replace(/^\/math\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Solve this step-by-step for a student: ${mathProblem}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Solve this step-by-step for a student: ${mathProblem}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🧮 **Math Solution:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 📈 Visual Math Graph
   if (lowerText.startsWith('/graph ')) {
     await sendTypingOn(senderPsid, pageToken);
     const mathEq = input.replace(/^\/graph\s*/i, '').trim();
@@ -167,81 +236,73 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 📝 Paraphrase Tool
   if (lowerText.startsWith('/paraphrase ')) {
     await sendTypingOn(senderPsid, pageToken);
     const textToPara = input.replace(/^\/paraphrase\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Paraphrase this academically with better vocabulary: ${textToPara}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Paraphrase this academically with better vocabulary: ${textToPara}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `📝 **Paraphrased Version:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 🔍 Wiki Search
   if (lowerText.startsWith('/wiki ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/wiki\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Give a concise Wikipedia-style summary with key facts about: ${topic}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Give a concise Wikipedia-style summary with key facts about: ${topic}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🔍 **Wikipedia Summary - ${topic}:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 📖 Dictionary Define
   if (lowerText.startsWith('/define ')) {
     await sendTypingOn(senderPsid, pageToken);
     const word = input.replace(/^\/define\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Define "${word}". Include part of speech, meaning, and 2 example sentences.`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Define "${word}". Include part of speech, meaning, and 2 example sentences.`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `📖 **Dictionary Definition:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 📚 Citation Generator
   if (lowerText.startsWith('/cite ')) {
     await sendTypingOn(senderPsid, pageToken);
     const citeDetails = input.replace(/^\/cite\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Generate citations for this material in both APA 7th Edition and MLA Format: ${citeDetails}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Generate citations for this material in both APA 7th Edition and MLA Format: ${citeDetails}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `📚 **Citation References:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 🎴 Flashcards Generator
   if (lowerText.startsWith('/flashcards ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/flashcards\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Create 3 study flashcards (Question & Answer format) for the topic: ${topic}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Create 3 study flashcards (Question & Answer format) for the topic: ${topic}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🎴 **Study Flashcards - ${topic}:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 💻 Code Assistant
   if (lowerText.startsWith('/code ')) {
     await sendTypingOn(senderPsid, pageToken);
     const codeQuery = input.replace(/^\/code\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Act as an expert programmer. Help with this coding task/query, provide clean formatted code and brief explanations: ${codeQuery}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Act as an expert programmer. Help with this coding task/query, provide clean formatted code and brief explanations: ${codeQuery}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `💻 **Code Solution:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // 🌐 Link / Text Summarizer
   if (lowerText.startsWith('/summarize ')) {
     await sendTypingOn(senderPsid, pageToken);
     const content = input.replace(/^\/summarize\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Summarize this text or topic in 4-5 bullet points focusing on main ideas: ${content}`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Summarize this text or topic in 4-5 bullet points focusing on main ideas: ${content}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `📌 **Key Summary:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
-  // ❓ Interactive Quiz
   if (lowerText.startsWith('/quiz ')) {
     await sendTypingOn(senderPsid, pageToken);
     const topic = input.replace(/^\/quiz\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Create 1 multiple-choice review question about "${topic}" with 3 options labeled A, B, and C. Include the correct answer at the bottom hidden or indicated gently.`, getRandomApiKey(apiKeys), senderPsid);
+    const reply = await getDirectGeminiResponse(`Create 1 multiple-choice review question about "${topic}" with 3 options labeled A, B, and C. Include the correct answer at the bottom hidden or indicated gently.`, apiKeys, senderPsid);
     
     const quickReplies = [
       { content_type: "text", title: "Option A", payload: "Answered A" },
@@ -253,14 +314,12 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // 🗣️ Talk Practice Mode Toggle
   if (['/talk', 'cmd_talk'].includes(lowerText)) {
     try { await kv.set(`user_mode_${senderPsid}`, 'TALK_MODE'); } catch (e) {}
     await sendTextMessage(senderPsid, "🗣️ **English Practice Mode Active!** Start chatting with me in English. I'll correct your grammar naturally.", pageToken);
     return true;
   }
 
-  // 📚 Help Command
   if (['/commands', '/help', 'cmd_help'].includes(lowerText)) {
     await sendTypingOn(senderPsid, pageToken);
     const helpMessage = 
@@ -289,7 +348,6 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken) {
     return true;
   }
 
-  // Reset Memory
   if (['/stop', '/clear', '/delete', '/refresh', 'cmd_clear'].includes(lowerText)) {
     try {
       await kv.del(`chat_history_${senderPsid}`);
@@ -320,31 +378,26 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function handleEnglishTalkMode(senderPsid, userMessage, apiKeys, pageToken) {
   await sendTypingOn(senderPsid, pageToken);
   const prompt = `Act as an English tutor. Respond to: "${userMessage}". If there are grammar errors, gently correct them.`;
-  const tutorReply = await getDirectGeminiResponse(prompt, getRandomApiKey(apiKeys), senderPsid);
+  const tutorReply = await getDirectGeminiResponse(prompt, apiKeys, senderPsid);
   await sendLongTextMessage(senderPsid, tutorReply, pageToken);
   await sendTypingOff(senderPsid, pageToken);
 }
 
-async function getDirectGeminiResponse(promptText, apiKey, senderPsid) {
-  if (!apiKey) return 'Error: Missing API Key.';
+async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const systemInstructionText = await getSystemInstructionForUser(senderPsid);
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: [{ parts: [{ text: promptText }] }]
-      })
-    });
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Walang tugon.';
+    const payload = {
+      system_instruction: { parts: [{ text: systemInstructionText }] },
+      contents: [{ parts: [{ text: promptText }] }]
+    };
+    return await callGeminiApiWithFallback(payload, apiKeys);
   } catch (err) {
-    return 'Nagkaroon ng problema.';
+    console.error("Direct Gemini Response Error:", err);
+    return 'Nagkaroon ng problema sa pagproseso ng response.';
   }
 }
 
-async function analyzeHomeworkWithGemini(imageUrl, apiKey, senderPsid) {
+async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   try {
     const imgRes = await fetch(imageUrl);
     const buffer = await imgRes.arrayBuffer();
@@ -352,22 +405,19 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKey, senderPsid) {
 
     const systemInstructionText = await getSystemInstructionForUser(senderPsid);
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: [{
-          parts: [
-            { text: "Analyze this image and explain in detail based on the language instruction:" },
-            { inline_data: { mime_type: "image/jpeg", data: base64Data } }
-          ]
-        }]
-      })
-    });
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Paki-picture uli nang mas malinaw.';
+    const payload = {
+      system_instruction: { parts: [{ text: systemInstructionText }] },
+      contents: [{
+        parts: [
+          { text: "Analyze this image and explain in detail based on the language instruction:" },
+          { inline_data: { mime_type: "image/jpeg", data: base64Data } }
+        ]
+      }]
+    };
+
+    return await callGeminiApiWithFallback(payload, apiKeys);
   } catch (e) {
+    console.error("Analyze Homework Error:", e);
     return 'Error sa pagproseso ng larawan.';
   }
 }
@@ -379,8 +429,7 @@ async function processAIWithMemory(senderPsid, userMessage, apiKeys, pageToken) 
   history.push({ role: 'user', parts: [{ text: userMessage }] });
   if (history.length > 8) history = history.slice(-8);
 
-  const selectedApiKey = getRandomApiKey(apiKeys);
-  const aiReply = await getGeminiResponseWithHistory(history, selectedApiKey, senderPsid);
+  const aiReply = await getGeminiResponseWithHistory(history, apiKeys, senderPsid);
 
   history.push({ role: 'model', parts: [{ text: aiReply }] });
   try { await kv.set(`chat_history_${senderPsid}`, history, { ex: 86400 }); } catch (e) {}
@@ -408,22 +457,16 @@ async function getSystemInstructionForUser(senderPsid) {
   }
 }
 
-async function getGeminiResponseWithHistory(history, apiKey, senderPsid) {
-  if (!apiKey) return 'Error: Missing API Key.';
+async function getGeminiResponseWithHistory(history, apiKeys, senderPsid) {
   try {
     const systemInstructionText = await getSystemInstructionForUser(senderPsid);
-
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: history
-      })
-    });
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Paki-tanong ulit!';
+    const payload = {
+      system_instruction: { parts: [{ text: systemInstructionText }] },
+      contents: history
+    };
+    return await callGeminiApiWithFallback(payload, apiKeys);
   } catch (error) {
+    console.error("Gemini Response with History Error:", error);
     return 'Error sa AI response.';
   }
 }
