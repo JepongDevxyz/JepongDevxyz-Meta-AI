@@ -3,9 +3,10 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash',
   'gemini-3.7-flash',
   'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro'
+  'gemini-flash-latest',
+  'gemini-2.5-flash-lite'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
