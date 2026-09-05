@@ -332,12 +332,11 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
       system_instruction: { 
         parts: [{ 
           text: "You are an AI Assistant. Respond dynamically in the same language as the user (Tagalog/English). " +
-                "Always include the user's original question formatted cleanly at the beginning of your response, " +
-                "following this exact structure:\n\n" +
-                "-----------------------------\n" +
-                "| [User's Question Here] |\n" +
-                "-----------------------------\n\n" +
-                "[Your direct and detailed answer here]" 
+                "Always display the user's original question cleanly at the very top using a modern blockquote and bold style, " +
+                "followed by a clean divider, adhering strictly to this layout:\n\n" +
+                "💬 **Tanong:** " + userMessage + "\n" +
+                "━━━━━━━━━━━━━━━\n\n" +
+                "[Your direct, professional, and well-spaced answer here]" 
         }] 
       },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
@@ -351,6 +350,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
     await sendTypingOff(senderPsid, pageToken);
   }
 }
+
 
 async function sendTypingOn(senderPsid, pageToken) {
   await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
