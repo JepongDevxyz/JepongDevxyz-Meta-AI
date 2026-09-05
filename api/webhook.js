@@ -18,8 +18,9 @@ function getRotatedApiKey(keysList) {
   return apiKey;
 }
 
-// 🧠 IN-MEMORY DEDUPLICATION CACHE
+// 🧠 IN-MEMORY Caches (Deduplication & User Custom Personas)
 const processedMessageIds = new Set();
+const userPersonasMap = new Map(); // Dito ise-save ang persona bawat user sa memory
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -142,8 +143,6 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
   const requestBody = JSON.parse(JSON.stringify(payload));
-  
-  // 🌐 Awtomatikong isinasama ang Google Search tool para ang Gemini na ang magdesisyon kung gagamitin
   requestBody.tools = [{ googleSearch: {} }];
 
   const startTime = Date.now();
@@ -197,7 +196,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
       await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Auto-Search & Infinite Rotational)**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (In-Memory Persona)**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -225,7 +224,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
   }
 
   if (['/commands', '/help'].includes(lowerText)) {
-    const helpMsg = "📚 AI Help Menu\n\n🎨 `/imagen [prompt]` \n🎓 `/math [prob]`, `/code [task]`";
+    const helpMsg = "📚 AI Help Menu\n\n🎨 `/imagen [prompt]` \n🎓 `/math [prob]`, `/code [task]`\n🔄 `/reset` o `/refresh` (Ibalik sa normal mode)";
     await sendTextMessage(senderPsid, helpMsg, pageToken);
     return true;
   }
@@ -344,17 +343,38 @@ async function getFacebookUserName(senderPsid, pageToken) {
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
   try {
     const firstName = await getFacebookUserName(senderPsid, pageToken);
+    const lowerMsg = userMessage.toLowerCase();
+
+    // 🔄 KUNG GUSTO I-RESET, I-REFRESH O IBALIK SA NORMAL MODE
+    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode', 'tama na ang akting'].some(cmd => lowerMsg.includes(cmd))) {
+      userPersonasMap.delete(senderPsid);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang aking mode. Bumalik na ako sa pagiging normal na AI assistant mo, ${firstName}!`, pageToken);
+      await sendTypingOff(senderPsid, pageToken);
+      return;
+    }
+
+    // 🎭 KUNIN O I-AUTO DETECT ANG CUSTOM PERSONA MULA SA MEMORY MAP
+    let currentPersona = userPersonasMap.get(senderPsid) || null;
+    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|parang|gawin mo akong|acting|pretend/i.test(userMessage);
+
+    if (isPersonaTrigger && !currentPersona) {
+      currentPersona = userMessage;
+      userPersonasMap.set(senderPsid, currentPersona);
+    }
+
+    let systemInstructionText = `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
+      `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
+      `adhering strictly to this layout:\n\n` +
+      `.ᐟ ${firstName} : ' ${userMessage} '\n` +
+      `━━━━━━━━━━━━━━━━━━\n\n` +
+      `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]`;
+
+    if (currentPersona) {
+      systemInstructionText += `\n\nCRITICAL ROLEPLAY RULE: You must strictly adopt this persona/behavior requested by the user: "${currentPersona}". Maintain this roleplay consistently in all your responses until the user commands you to reset or return to normal mode.`;
+    }
+
     const payload = {
-      system_instruction: { 
-        parts: [{ 
-          text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
-                `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
-                `adhering strictly to this layout:\n\n` +
-                `.ᐟ ${firstName} : ' ${userMessage} '\n` +
-                `━━━━━━━━━━━━━━━━━━\n\n` +
-                `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
-        }] 
-      },
+      system_instruction: { parts: [{ text: systemInstructionText }] },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
