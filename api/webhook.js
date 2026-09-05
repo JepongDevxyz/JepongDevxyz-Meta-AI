@@ -334,7 +334,7 @@ async function getFacebookUserName(senderPsid, pageToken) {
     return data.first_name || 'Kaibigan';
   } catch (err) {
     console.error("Error fetching user name:", err);
-    return 'Kaibigan';
+    return 'Boss';
   }
 }
 
@@ -349,8 +349,8 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
           text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
                 `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
                 `adhering strictly to this layout:\n\n` +
-                `💬 ${firstName} ${userMessage}\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `.ᐟ ${firstName} ${userMessage}\n` +
+                `━━━━━━━━━━━━━━━━━━━\n\n` +
                 `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
         }] 
       },
