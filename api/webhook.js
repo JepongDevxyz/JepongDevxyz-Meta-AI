@@ -138,7 +138,7 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ INFINITE ROTATIONAL FALLBACK ENGINE WITH DYNAMIC AUTO-SEARCH GROUNDING
+ * ⚡ CONTROLLED ROTATIONAL FALLBACK ENGINE WITH DELAY & SEARCH GROUNDING
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
@@ -149,8 +149,9 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   const startTime = Date.now();
   let attemptCount = 0;
   let lastError = null;
+  const maxAttempts = GEMINI_MODELS_FALLBACK.length * 2; // Limitahan ang pag-ikot para iwas spam
 
-  while (true) {
+  while (attemptCount < maxAttempts) {
     if (Date.now() - startTime > maxTotalTimeoutMs) {
       break;
     }
@@ -160,7 +161,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 5000);
 
     try {
       const response = await fetch(endpoint, {
@@ -176,7 +177,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return data.candidates[0].content.parts[0].text;
       } else {
-        console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} busy, lipat sa susunod...`);
+        console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} busy/error:`, data.error?.message || response.status);
       }
     } catch (err) {
       clearTimeout(timer);
@@ -184,6 +185,8 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     }
 
     attemptCount++;
+    // Maglagay ng 500ms delay bago subukan ang susunod para maiwasan ang rate limit
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
   throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
@@ -379,7 +382,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 6000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 8000);
     await sendLongTextMessage(senderPsid, aiReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
 
