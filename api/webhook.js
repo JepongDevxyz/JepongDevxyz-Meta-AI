@@ -1,10 +1,10 @@
 // Reliable at working models na lang para hindi mag-error
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash',
-'gemini-3.7-flash',
-'gemini-3.5-flash',
-'gemini-3.5-flash-lite',
-'gemini-flash-latest'
+  'gemini-3.7-flash',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
@@ -17,9 +17,10 @@ function getRotatedApiKey(keysList) {
   return apiKey;
 }
 
-// 🧠 IN-MEMORY Caches (Deduplication & User Custom Personas)
+// 🧠 IN-MEMORY Caches (Deduplication, User Custom Personas, & Chat History)
 const processedMessageIds = new Set();
-const userPersonasMap = new Map(); // Dito ise-save ang persona bawat user sa memory
+const userPersonasMap = new Map(); // Persona bawat user
+const userConversationsMap = new Map(); // Chat history para sa continuous conversation
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -136,15 +137,17 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ STABLE ROTATIONAL FALLBACK ENGINE (Tinanggal muna ang search tool para maiwasan ang error)
+ * ⚡ STABLE ROTATIONAL FALLBACK ENGINE WITH SAFE GOOGLE SEARCH GROUNDING
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 12000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
-  const requestByte = JSON.stringify(payload);
+  const requestBody = JSON.parse(JSON.stringify(payload));
+  requestBody.tools = [{ googleSearch: {} }];
+
   const startTime = Date.now();
   let lastError = null;
-  const maxAttempts = Math.min(apiKeys.length * GEMINI_MODELS_FALLBACK.length, 10);
+  const maxAttempts = Math.min(apiKeys.length * GEMINI_MODELS_FALLBACK.length, 12);
   let attemptCount = 0;
 
   while (attemptCount < maxAttempts) {
@@ -163,7 +166,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: requestByte,
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
 
@@ -195,7 +198,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
       await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (In-Memory Persona)**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Continuous Chat & Search Enabled)**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -347,7 +350,8 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     // 🔄 KUNG GUSTO I-RESET, I-REFRESH O IBALIK SA NORMAL MODE
     if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode', 'tama na ang akting'].some(cmd => lowerMsg.includes(cmd))) {
       userPersonasMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang aking mode. Bumalik na ako sa pagiging normal na AI assistant mo, ${firstName}!`, pageToken);
+      userConversationsMap.delete(senderPsid);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang aking mode at memory. Bumalik na ako sa pagiging normal na AI assistant mo, ${firstName}!`, pageToken);
       await sendTypingOff(senderPsid, pageToken);
       return;
     }
@@ -360,6 +364,18 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       currentPersona = userMessage;
       userPersonasMap.set(senderPsid, currentPersona);
     }
+
+    // 💬 CONTINUOUS CHAT / CONVERSATION HISTORY MANAGEMENT
+    let history = userConversationsMap.get(senderPsid) || [];
+    
+    // I-push ang kasalukuyang mensahe ng user sa history
+    history.push({ role: 'user', parts: [{ text: userMessage }] });
+
+    // Panatilihing huling 10 mensahe lamang para hindi lumaki masyado ang payload at mag-error
+    if (history.length > 10) {
+      history = history.slice(history.length - 10);
+    }
+    userConversationsMap.set(senderPsid, history);
 
     let systemInstructionText = `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
       `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
@@ -374,14 +390,20 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
 
     const payload = {
       system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }]
+      contents: history
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    
+    // Idagdag din ang sagot ng AI sa history para tuloy-tuloy ang konteksto
+    history.push({ role: 'model', parts: [{ text: aiReply }] });
+    userConversationsMap.set(senderPsid, history);
+
     await sendLongTextMessage(senderPsid, aiReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
 
   } catch (error) {
+    console.error("AI Processing Error:", error);
     await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit.", pageToken);
     await sendTypingOff(senderPsid, pageToken);
   }
