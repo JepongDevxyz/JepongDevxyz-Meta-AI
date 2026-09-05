@@ -5,8 +5,7 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-flash-latest',
-  'gemini-2.5-flash-lite'
+  'gemini-flash-latest'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
@@ -147,16 +146,16 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   requestBody.tools = [{ googleSearch: {} }];
 
   const startTime = Date.now();
-  let attemptCount = 0;
   let lastError = null;
-  const maxAttempts = GEMINI_MODELS_FALLBACK.length * 2; // Limitahan ang pag-ikot para iwas spam
+  const maxAttempts = apiKeys.length * GEMINI_MODELS_FALLBACK.length;
+  let attemptCount = 0;
 
   while (attemptCount < maxAttempts) {
     if (Date.now() - startTime > maxTotalTimeoutMs) {
       break;
     }
 
-    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
+    const modelName = GEMINI_MODELS_FALLBACK[Math.floor(attemptCount / apiKeys.length) % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
@@ -185,8 +184,8 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     }
 
     attemptCount++;
-    // Maglagay ng 500ms delay bago subukan ang susunod para maiwasan ang rate limit
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Maglagay ng 300ms delay bago subukan ang susunod para maiwasan ang rate limit
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
