@@ -329,17 +329,19 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 }
 
 /**
- * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK
+ * 👤 TAMANG KUHA NG FIRST NAME MULA SA FACEBOOK GRAPH API
  */
 async function getFacebookUserName(senderPsid, pageToken) {
   try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
-    const data = await res.json();
-    return data.first_name || 'Boss';
+    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
+    const data = await response.json();
+    if (data && data.first_name) {
+      return data.first_name;
+    }
   } catch (err) {
-    console.error("Error fetching user name:", err);
-    return 'Boss';
+    console.error("Error fetching Facebook user first name:", err);
   }
+  return 'Boss'; // Fallback name kung sakaling magka-error o walang Page Token permission
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
