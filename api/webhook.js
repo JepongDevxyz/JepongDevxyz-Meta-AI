@@ -1,8 +1,5 @@
-// Reliable models for production API calls - Siniguradong working at may free tier
+// ✅ MGA TUNAY AT WORKING NA GEMINI MODELS SA API
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
   'gemini-2.5-flash',
   'gemini-1.5-flash',
   'gemini-1.5-pro'
@@ -14,7 +11,6 @@ let currentKeyIndex = 0;
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const apiKey = keysList[currentKeyIndex];
-  // Lumipat sa susunod na key, babalik sa 0 kapag umabot sa dulo (Round-Robin)
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
   return apiKey;
 }
@@ -45,7 +41,6 @@ export default async function handler(req, res) {
 
     if (body.object === 'page') {
       try {
-        // 🔄 Tumatakbo nang synchronous bago mag-respond para hindi patayin ng Vercel
         for (const entry of body.entry) {
           if (!entry.messaging || !entry.messaging[0]) continue;
           
@@ -55,7 +50,6 @@ export default async function handler(req, res) {
 
           if (!senderPsid) continue;
 
-          // 🛑 IN-MEMORY DEDUPLICATION CHECK
           if (messageId) {
             if (processedMessageIds.has(messageId)) {
               console.log(`[DEDUPLICATION] Skipped duplicate: ${messageId}`);
@@ -65,14 +59,12 @@ export default async function handler(req, res) {
             setTimeout(() => processedMessageIds.delete(messageId), 300000);
           }
 
-          // A. Postback Actions
           if (webhookEvent.postback) {
             const payload = webhookEvent.postback.payload;
             await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
             continue;
           }
 
-          // B. Attachments (Image, Audio, Documents)
           if (webhookEvent.message && webhookEvent.message.attachments) {
             const attachment = webhookEvent.message.attachments[0];
 
@@ -101,7 +93,6 @@ export default async function handler(req, res) {
             }
           }
 
-          // C. Text Messages / Commands
           if (webhookEvent.message && !webhookEvent.message.is_echo) {
             const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
             const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
@@ -135,7 +126,6 @@ export default async function handler(req, res) {
         console.error("Processing Error:", err);
       }
 
-      // 🚀 ASYNC DONE -> DOON PA LANG MAGSESEND NG STATUS SA FACEBOOK
       return res.status(200).send('EVENT_RECEIVED');
     }
     return res.status(404).send('Not Found');
@@ -146,7 +136,7 @@ export default async function handler(req, res) {
 /**
  * ⚡ GEMINI ENGINE WITH ROTATIONAL API KEYS AND FALLBACK
  */
-async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, timeoutMs = 6000) {
+async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, timeoutMs = 8000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
 
   const requestBody = JSON.parse(JSON.stringify(payload));
@@ -327,42 +317,49 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 }
 
 /**
- * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK
+ * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK (MAY SAFETY FALLBACK)
  */
 async function getFacebookUserName(senderPsid, pageToken) {
   try {
     const res = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
     const data = await res.json();
-    return data.first_name || 'Boss';
+    if (data && data.first_name) {
+      return data.first_name;
+    }
+    return null; // Kung restricted o walang maibigay, ibabalik ang null para ma-handle ng AI nang natural
   } catch (err) {
     console.error("Error fetching user name:", err);
-    return 'Boss';
+    return null;
   }
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
   try {
-    // Kunin ang pangalan ng user para personal ang pagbati
     const firstName = await getFacebookUserName(senderPsid, pageToken);
+    
+    // Kung hindi makuha ang pangalan, hayaan ang AI na kausapin ang user nang pangkalahatan nang hindi pilit naglalagay ng "Kaibigan"
+    const nameInstruction = firstName 
+      ? `You are chatting with ${firstName}. Address them by their first name.` 
+      : `You are chatting with a user on Messenger.`;
 
     const payload = {
       system_instruction: { 
         parts: [{ 
-          text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
-                `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
-                `adhering strictly to this layout:\n\n` +
-                `.ᐟ ${firstName} : ' ${userMessage} '\n` +
-                `━━━━━━━━━━━━━━━━━━\n\n` +
-                `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
+          text: `You are an AI Assistant. ${nameInstruction} Respond dynamically in the same language as the user (Tagalog/English). ` +
+                `Always display the user's original question cleanly at the top using this exact layout:\n\n` +
+                `.ᐟ ${firstName || 'User'} ${userMessage}\n` +
+                `━━━━━━━━━━━━━━━━━━━\n\n` +
+                `[Your direct, professional, and well-spaced answer here]` 
         }] 
       },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 6000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 8000);
     await sendLongTextMessage(senderPsid, aiReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
   } catch (error) {
+    console.error("AI Processing Error:", error);
     await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit.", pageToken);
     await sendTypingOff(senderPsid, pageToken);
   }
