@@ -3,7 +3,9 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash',
   'gemini-3.7-flash',
   'gemini-3.5-flash',
-  'gemini-2.5-flash'
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
@@ -331,7 +333,7 @@ async function getFacebookUserName(senderPsid, pageToken) {
   try {
     const res = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
     const data = await res.json();
-    return data.first_name || 'Kaibigan';
+    return data.first_name || 'Boss';
   } catch (err) {
     console.error("Error fetching user name:", err);
     return 'Boss';
@@ -349,8 +351,8 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
           text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
                 `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
                 `adhering strictly to this layout:\n\n` +
-                `.ᐟ ${firstName} ${userMessage}\n` +
-                `━━━━━━━━━━━━━━━━━━━\n\n` +
+                `.ᐟ ${firstName} : ' ${userMessage} '\n` +
+                `━━━━━━━━━━━━━━━━━━\n\n` +
                 `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
         }] 
       },
