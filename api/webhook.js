@@ -4,7 +4,6 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.7-flash',
   'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
-  'gemini-2.5-flash',
   'gemini-flash-latest'
 ];
 
@@ -139,7 +138,7 @@ export default async function handler(req, res) {
 /**
  * ⚡ CONTROLLED ROTATIONAL FALLBACK ENGINE WITH DELAY & SEARCH GROUNDING
  */
-async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
+async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 12000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
   const requestBody = JSON.parse(JSON.stringify(payload));
@@ -147,7 +146,8 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
 
   const startTime = Date.now();
   let lastError = null;
-  const maxAttempts = apiKeys.length * GEMINI_MODELS_FALLBACK.length;
+  // Limitahan lang sa bilang ng keys o maximum na 8-10 attempts para hindi mag-timeout
+  const maxAttempts = Math.min(apiKeys.length, 8);
   let attemptCount = 0;
 
   while (attemptCount < maxAttempts) {
@@ -155,12 +155,12 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       break;
     }
 
-    const modelName = GEMINI_MODELS_FALLBACK[Math.floor(attemptCount / apiKeys.length) % GEMINI_MODELS_FALLBACK.length];
+    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 4000);
 
     try {
       const response = await fetch(endpoint, {
@@ -184,8 +184,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     }
 
     attemptCount++;
-    // Maglagay ng 300ms delay bago subukan ang susunod para maiwasan ang rate limit
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 
   throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
