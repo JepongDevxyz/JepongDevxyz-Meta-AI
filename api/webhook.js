@@ -304,6 +304,8 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   }
 }
 
+async function analyzeHomeworkWithGeminned(imageUrl, apiKeys, senderPsid) {}
+
 async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   try {
     const imgRes = await fetch(imageUrl);
@@ -327,7 +329,17 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
   try {
     const payload = {
-      system_instruction: { parts: [{ text: "Respond dynamically in the same language as the user (Tagalog/English)." }] },
+      system_instruction: { 
+        parts: [{ 
+          text: "You are an AI Assistant. Respond dynamically in the same language as the user (Tagalog/English). " +
+                "Always include the user's original question formatted cleanly at the beginning of your response, " +
+                "following this exact structure:\n\n" +
+                "-----------------------------\n" +
+                "| [User's Question Here] |\n" +
+                "-----------------------------\n\n" +
+                "[Your direct and detailed answer here]" 
+        }] 
+      },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
