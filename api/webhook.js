@@ -1,10 +1,10 @@
 // Mga tunay at opisyal na Gemini models para maiwasan ang error
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest'
+  'gemini-flash-latest',    // Awtomatikong tuturo sa pinakabagong bersyon (3.8-flash)
+  'gemini-3.8-flash',       // Pinakabagong release ngayon (Setyembre 2026)
+  'gemini-3.7-flash',       // Maayos na fallback 1
+  'gemini-3.6-flash',       // Maayos na fallback 2
+  'gemini-3.5-flash-lite'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
