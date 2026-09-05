@@ -1,9 +1,8 @@
-// Reliable at working models na lang para hindi mag-error
+// Mga tunay at opisyal na Gemini models para maiwasan ang error
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
   'gemini-flash-latest'
 ];
 
@@ -139,7 +138,7 @@ export default async function handler(req, res) {
 /**
  * ⚡ STABLE ROTATIONAL FALLBACK ENGINE WITH SAFE GOOGLE SEARCH GROUNDING
  */
-async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 12000) {
+async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
   const requestBody = JSON.parse(JSON.stringify(payload));
@@ -160,7 +159,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 5000);
 
     try {
       const response = await fetch(endpoint, {
@@ -248,7 +247,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return '❌ Error sa pagproseso ng boses.';
   }
@@ -269,7 +268,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return '❌ Error sa pagbasa ng file.';
   }
@@ -280,7 +279,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 6000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -302,7 +301,7 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: promptText }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 5000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -322,7 +321,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 7000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return 'Error sa pag-analyze ng larawan.';
   }
@@ -341,7 +340,7 @@ async function getFacebookUserName(senderPsid, pageToken) {
   } catch (err) {
     console.error("Error fetching Facebook user first name:", err);
   }
-  return 'Boss'; // Fallback name kung sakaling magka-error o walang Page Token permission
+  return 'Boss';
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
@@ -395,7 +394,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       contents: history
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
     
     // Idagdag din ang sagot ng AI sa history para tuloy-tuloy ang konteksto
     history.push({ role: 'model', parts: [{ text: aiReply }] });
