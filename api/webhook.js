@@ -304,8 +304,6 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   }
 }
 
-async function analyzeHomeworkWithGeminned(imageUrl, apiKeys, senderPsid) {}
-
 async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   try {
     const imgRes = await fetch(imageUrl);
@@ -326,17 +324,34 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
+/**
+ * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK
+ */
+async function getFacebookUserName(senderPsid, pageToken) {
+  try {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
+    const data = await res.json();
+    return data.first_name || 'Kaibigan';
+  } catch (err) {
+    console.error("Error fetching user name:", err);
+    return 'Kaibigan';
+  }
+}
+
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
   try {
+    // Kunin ang pangalan ng user para personal ang pagbati
+    const firstName = await getFacebookUserName(senderPsid, pageToken);
+
     const payload = {
       system_instruction: { 
         parts: [{ 
-          text: "You are an AI Assistant. Respond dynamically in the same language as the user (Tagalog/English). " +
-                "Always display the user's original question cleanly at the very top using a modern blockquote and bold style, " +
-                "followed by a clean divider, adhering strictly to this layout:\n\n" +
-                "💬 **Tanong:** " + userMessage + "\n" +
-                "━━━━━━━━━━━━━━━\n\n" +
-                "[Your direct, professional, and well-spaced answer here]" 
+          text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
+                `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
+                `adhering strictly to this layout:\n\n` +
+                `💬 ${firstName} ${userMessage}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
         }] 
       },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
@@ -350,7 +365,6 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
     await sendTypingOff(senderPsid, pageToken);
   }
 }
-
 
 async function sendTypingOn(senderPsid, pageToken) {
   await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
