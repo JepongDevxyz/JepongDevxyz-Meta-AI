@@ -1,4 +1,4 @@
-// ✅ MGA TUNAY AT WORKING NA GEMINI MODELS SA API
+// Reliable models for production API calls - Siniguradong working at may free tier
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash',
   'gemini-3.7-flash',
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
       try {
         for (const entry of body.entry) {
           if (!entry.messaging || !entry.messaging[0]) continue;
-          
+
           const webhookEvent = entry.messaging[0];
           const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
           const messageId = webhookEvent.message ? webhookEvent.message.mid : null;
@@ -137,24 +137,36 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ GEMINI ENGINE WITH ROTATIONAL API KEYS AND FALLBACK
+ * ⚡ INFINITE ROTATIONAL FALLBACK ENGINE WITH SEARCH GROUNDING
  */
-async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, timeoutMs = 8000) {
+async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
-
+  
   const requestBody = JSON.parse(JSON.stringify(payload));
+  
+  // 🌐 Dito inilagay ang internet grounding search tool kung enabled
   if (enableSearch) {
     requestBody.tools = [{ googleSearch: {} }];
   }
 
+  const startTime = Date.now();
+  let attemptCount = 0;
   let lastError = null;
 
-  for (const modelName of GEMINI_MODELS_FALLBACK) {
+  // Infinite loop hanggang sa makahanap ng mabilis na sumagot o umabot sa Vercel limit
+  while (true) {
+    if (Date.now() - startTime > maxTotalTimeoutMs) {
+      break;
+    }
+
+    // Umiikot pabalik sa simula kapag umabot na sa dulo ng array gamit ang modulo
+    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
+    
+    // 4 segundo bawat subok para mabilis lumipat sa iba kapag medyo mabagal
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), 4000);
 
     try {
       const response = await fetch(endpoint, {
@@ -170,15 +182,17 @@ async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false,
       if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return data.candidates[0].content.parts[0].text;
       } else {
-        console.error(`Model ${modelName} failed response:`, data.error || data);
+        console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} busy, lipat sa susunod...`);
       }
     } catch (err) {
       clearTimeout(timer);
-      console.error(`Failed connection with ${modelName}:`, err.message);
       lastError = err;
     }
+
+    attemptCount++;
   }
-  throw lastError || new Error('Lahat ng AI models ay busy.');
+
+  throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -186,10 +200,10 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
 
   if (['/stats', '/admin'].includes(lowerText)) {
     if (senderPsid !== adminPsid) {
-      await sendTextMessage(senderPsid, "🚫 **Access Denied!**", pageToken);
+      await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Rotational)**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Infinite Rotational)**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -217,7 +231,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
   }
 
   if (['/commands', '/help'].includes(lowerText)) {
-    const helpMsg = "📚 **AI Help Menu**\n\n🎨 \`/imagen [prompt]\` \n🎓 \`/math [prob]\`, \`/code [task]\`";
+    const helpMsg = "📚 AI Help Menu\n\n🎨 `/imagen [prompt]` \n🎓 `/math [prob]`, `/code [task]`";
     await sendTextMessage(senderPsid, helpMsg, pageToken);
     return true;
   }
@@ -278,7 +292,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
 }
 
 async function generateAndSendImage(senderPsid, prompt, pageToken) {
-  await sendTextMessage(senderPsid, `🖼️ Ginagawa ang larawan...`, pageToken);
+  await sendTextMessage(senderPsid, "🖼️ Ginagawa ang larawan...", pageToken);
   const seed = Math.floor(Math.random() * 1000000);
   const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}/image.jpg?width=1024&height=1024&nologo=true&seed=${seed}`;
   try {
@@ -320,49 +334,41 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 }
 
 /**
- * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK (MAY SAFETY FALLBACK)
+ * 👤 KUNIN ANG FIRST NAME NG USER SA FACEBOOK
  */
 async function getFacebookUserName(senderPsid, pageToken) {
   try {
     const res = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
     const data = await res.json();
-    if (data && data.first_name) {
-      return data.first_name;
-    }
-    return null; // Kung restricted o walang maibigay, ibabalik ang null para ma-handle ng AI nang natural
+    return data.first_name || 'Boss';
   } catch (err) {
     console.error("Error fetching user name:", err);
-    return null;
+    return 'Boss';
   }
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
   try {
     const firstName = await getFacebookUserName(senderPsid, pageToken);
-    
-    // Kung hindi makuha ang pangalan, hayaan ang AI na kausapin ang user nang pangkalahatan nang hindi pilit naglalagay ng "Kaibigan"
-    const nameInstruction = firstName 
-      ? `You are chatting with ${firstName}. Address them by their first name.` 
-      : `You are chatting with a user on Messenger.`;
-
     const payload = {
       system_instruction: { 
         parts: [{ 
-          text: `You are an AI Assistant. ${nameInstruction} Respond dynamically in the same language as the user (Tagalog/English). ` +
-                `Always display the user's original question cleanly at the top using this exact layout:\n\n` +
-                `.ᐟ ${firstName || 'User'} ${userMessage}\n` +
-                `━━━━━━━━━━━━━━━━━━━\n\n` +
-                `[Your direct, professional, and well-spaced answer here]` 
+          text: `You are an AI Assistant chatting with ${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
+                `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
+                `adhering strictly to this layout:\n\n` +
+                `.ᐟ ${firstName} : ' ${userMessage} '\n` +
+                `━━━━━━━━━━━━━━━━━━\n\n` +
+                `[Your direct, professional, and well-spaced answer here, addressing the user as ${firstName} when appropriate]` 
         }] 
       },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 8000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 6000);
     await sendLongTextMessage(senderPsid, aiReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
+
   } catch (error) {
-    console.error("AI Processing Error:", error);
     await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit.", pageToken);
     await sendTypingOff(senderPsid, pageToken);
   }
