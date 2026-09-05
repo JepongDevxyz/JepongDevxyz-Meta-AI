@@ -121,8 +121,7 @@ export default async function handler(req, res) {
               continue;
             }
 
-            const isRealtimeQuery = /weather|panahon|balita|news|ngayon|score|presyo|sino si|kailan|update/i.test(finalMessage);
-            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, isRealtimeQuery);
+            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
           }
         }
       } catch (err) {
@@ -137,34 +136,29 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ INFINITE ROTATIONAL FALLBACK ENGINE WITH SEARCH GROUNDING
+ * ⚡ INFINITE ROTATIONAL FALLBACK ENGINE WITH DYNAMIC AUTO-SEARCH GROUNDING
  */
-async function callGeminiApiWithFallback(payload, apiKeys, enableSearch = false, maxTotalTimeoutMs = 15000) {
+async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
   const requestBody = JSON.parse(JSON.stringify(payload));
   
-  // 🌐 Dito inilagay ang internet grounding search tool kung enabled
-  if (enableSearch) {
-    requestBody.tools = [{ googleSearch: {} }];
-  }
+  // 🌐 Awtomatikong isinasama ang Google Search tool para ang Gemini na ang magdesisyon kung gagamitin
+  requestBody.tools = [{ googleSearch: {} }];
 
   const startTime = Date.now();
   let attemptCount = 0;
   let lastError = null;
 
-  // Infinite loop hanggang sa makahanap ng mabilis na sumagot o umabot sa Vercel limit
   while (true) {
     if (Date.now() - startTime > maxTotalTimeoutMs) {
       break;
     }
 
-    // Umiikot pabalik sa simula kapag umabot na sa dulo ng array gamit ang modulo
     const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
-    // 4 segundo bawat subok para mabilis lumipat sa iba kapag medyo mabagal
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
 
@@ -203,7 +197,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
       await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Infinite Rotational)**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Status: **Operational 🟢 (Auto-Search & Infinite Rotational)**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -253,7 +247,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, false, 9000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return '❌ Error sa pagproseso ng boses.';
   }
@@ -274,7 +268,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, false, 9000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return '❌ Error sa pagbasa ng file.';
   }
@@ -285,7 +279,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, true, 6000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 6000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -307,7 +301,7 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: promptText }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, false, 5000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 5000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -327,7 +321,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, false, 7000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 7000);
   } catch (e) {
     return 'Error sa pag-analyze ng larawan.';
   }
@@ -347,7 +341,7 @@ async function getFacebookUserName(senderPsid, pageToken) {
   }
 }
 
-async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enableSearch = false) {
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
   try {
     const firstName = await getFacebookUserName(senderPsid, pageToken);
     const payload = {
@@ -364,7 +358,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, enab
       contents: [{ role: 'user', parts: [{ text: userMessage }] }]
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, enableSearch, 6000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 6000);
     await sendLongTextMessage(senderPsid, aiReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
 
