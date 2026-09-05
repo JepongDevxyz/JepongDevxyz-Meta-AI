@@ -1,10 +1,10 @@
-// Reliable models for production API calls - Siniguradong working at may free tier
+// Reliable at working models na lang para hindi mag-error
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest'
+'gemini-3.7-flash',
+'gemini-3.5-flash',
+'gemini-3.5-flash-lite',
+'gemini-flash-latest'
 ];
 
 // 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
@@ -136,18 +136,15 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ CONTROLLED ROTATIONAL FALLBACK ENGINE WITH DELAY & SEARCH GROUNDING
+ * ⚡ STABLE ROTATIONAL FALLBACK ENGINE (Tinanggal muna ang search tool para maiwasan ang error)
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 12000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
   
-  const requestBody = JSON.parse(JSON.stringify(payload));
-  requestBody.tools = [{ googleSearch: {} }];
-
+  const requestByte = JSON.stringify(payload);
   const startTime = Date.now();
   let lastError = null;
-  // Limitahan lang sa bilang ng keys o maximum na 8-10 attempts para hindi mag-timeout
-  const maxAttempts = Math.min(apiKeys.length, 8);
+  const maxAttempts = Math.min(apiKeys.length * GEMINI_MODELS_FALLBACK.length, 10);
   let attemptCount = 0;
 
   while (attemptCount < maxAttempts) {
@@ -155,7 +152,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       break;
     }
 
-    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
+    const modelName = GEMINI_MODELS_FALLBACK[Math.floor(attemptCount / apiKeys.length) % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
     
@@ -166,7 +163,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+        body: requestByte,
         signal: controller.signal
       });
 
@@ -176,7 +173,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return data.candidates[0].content.parts[0].text;
       } else {
-        console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} busy/error:`, data.error?.message || response.status);
+        console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} error:`, data.error?.message || response.status);
       }
     } catch (err) {
       clearTimeout(timer);
