@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>JepongDevxyz AI</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    :root {
+      --bg-black: #000000;
+      --bubble-bot: #2e2f30;
+      --bubble-user: #0084ff;
+      --messenger-blue: #0084ff;
+      --text-white: #ffffff;
+      --text-gray: #8a8d91;
+      --input-bg: #242526;
+      --border-gray: rgba(255, 255, 255, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: var(--bg-black);
+      color: var(--text-white);
+    }
+
+    .messenger-screen {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      background-color: var(--bg-black);
+      position: relative;
+    }
+
+    /* Top Bar */
+    .top-bar {
+      height: 56px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--bg-black);
+      flex-shrink: 0;
+      z-index: 20;
+    }
+
+    .top-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--messenger-blue);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+
+    .avatar-wrapper {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      flex-shrink: 0;
+    }
+
+    .profile-photo {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+      background-color: #333;
+      display: block;
+    }
+
+    .online-badge {
+      display: none;
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 11px;
+      height: 11px;
+      background-color: #31a24c;
+      border: 2px solid var(--bg-black);
+      border-radius: 50%;
+    }
+
+    .online-badge.visible { display: block; }
+
+    .header-details {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .bot-name {
+      font-size: 1.02rem;
+      font-weight: 500;
+      color: var(--text-white);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-status {
+      font-size: 0.76rem;
+      color: var(--text-gray);
+      margin-top: -1px;
+      transition: color 0.2s;
+    }
+
+    .chat-status.online {
+      color: #31a24c;
+      font-weight: 500;
+    }
+
+    .info-btn {
+      background: none;
+      border: none;
+      color: var(--messenger-blue);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 6px;
+      border-radius: 50%;
+    }
+
+    /* Chat Thread */
+    .chat-area {
+      flex: 1;
+      padding: 14px 12px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .chat-area::-webkit-scrollbar { display: none; }
+
+    .message-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .message-row.user { justify-content: flex-end; }
+    .message-row.bot { justify-content: flex-start; }
+
+    .tiny-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      background-color: #333;
+    }
+
+    .bubble {
+      max-width: 78%;
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .message-row.user .bubble {
+      background-color: var(--bubble-user);
+      color: var(--text-white);
+      border-radius: 18px 18px 4px 18px;
+    }
+
+    .message-row.bot .bubble {
+      background-color: var(--bubble-bot);
+      color: var(--text-white);
+      border-radius: 18px 18px 18px 4px;
+    }
+
+    .quote-header {
+      font-size: 0.95rem;
+      color: var(--text-white);
+      margin-bottom: 8px;
+    }
+
+    .quote-divider {
+      border: 0;
+      height: 1px;
+      background-color: var(--border-gray);
+      margin-bottom: 10px;
+    }
+
+    .attachment-tags-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    .attachment-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 3px 8px;
+      border-radius: 6px;
+      width: fit-content;
+    }
+
+    /* Multiple Attachments Horizontal Scroll Strip */
+    .file-preview-strip {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background-color: #1a1a1a;
+      border-top: 1px solid #222;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .file-preview-strip.active { display: flex; }
+    .file-preview-strip::-webkit-scrollbar { display: none; }
+
+    .attachment-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background-color: #242526;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 4px 10px;
+      border-radius: 14px;
+      font-size: 0.78rem;
+      color: var(--messenger-blue);
+      flex-shrink: 0;
+    }
+
+    .chip-remove {
+      cursor: pointer;
+      color: #ff4d4f;
+      font-weight: bold;
+      background: none;
+      border: none;
+      margin-left: 2px;
+      display: flex;
+      align-items: center;
+    }
+
+    /* Bottom Input Bar */
+    .bottom-bar {
+      padding: 8px 10px;
+      background-color: var(--bg-black);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .icon-action {
+      background: none;
+      border: none;
+      color: var(--messenger-blue);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      flex-shrink: 0;
+    }
+
+    .icon-action.recording {
+      color: #ff3b30;
+      animation: pulse 1s infinite alternate;
+    }
+
+    @keyframes pulse {
+      from { transform: scale(1); }
+      to { transform: scale(1.18); }
+    }
+
+    .input-pill {
+      flex: 1;
+      height: 38px;
+      background-color: var(--input-bg);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .msg-field {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-white);
+      font-size: 0.95rem;
+    }
+
+    .msg-field::placeholder { color: var(--text-gray); }
+
+    .pill-emoji {
+      color: var(--messenger-blue);
+      cursor: pointer;
+      display: flex;
+    }
+
+    .recording-banner {
+      display: none;
+      flex: 1;
+      height: 38px;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 59, 48, 0.15);
+      border-radius: 20px;
+      padding: 0 14px;
+      font-size: 0.85rem;
+      color: #ff4d4f;
+    }
+    .recording-banner.active { display: flex; }
+
+    /* Modal Backdrop */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-backdrop.active { display: flex; }
+
+    .modal-content {
+      background: #18191a;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      width: 100%;
+      max-width: 320px;
+      border-radius: 20px;
+      padding: 24px 20px 20px;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+      position: relative;
+    }
+
+    .modal-avatar {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      object-fit: cover;
+      margin: 0 auto 12px;
+      display: block;
+      border: 2px solid var(--messenger-blue);
+    }
+
+    .modal-title { font-size: 1.15rem; font-weight: 700; color: var(--text-white); margin-bottom: 6px; }
+    .modal-dev { font-size: 0.92rem; color: var(--messenger-blue); font-weight: 500; margin-bottom: 14px; }
+    .modal-copyright {
+      font-size: 0.75rem;
+      color: var(--text-gray);
+      line-height: 1.4;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 14px;
+      margin-bottom: 16px;
+    }
+
+    .modal-close-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--input-bg);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      color: var(--text-white);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="messenger-screen">
+  <!-- Top Header Bar -->
+  <header class="top-bar">
+    <div class="top-left">
+      <button class="back-btn" id="resetChatBtn" title="Reset Chat">
+        <i data-lucide="arrow-left" style="width: 22px; height: 22px;"></i>
+      </button>
+      <div class="avatar-wrapper">
+        <img class="profile-photo" id="mainHeaderAvatar" alt="" />
+        <div class="online-badge" id="onlineBadge"></div>
+      </div>
+      <div class="header-details">
+        <div class="bot-name">JepongDevxyz AI</div>
+        <div class="chat-status" id="chatStatusText">Active now</div>
+      </div>
+    </div>
+    <button class="info-btn" id="infoBtn" title="Info">
+      <i data-lucide="info" style="width: 22px; height: 22px;"></i>
+    </button>
+  </header>
+
+  <!-- Message Stream -->
+  <main class="chat-area" id="chatStream"></main>
+
+  <!-- Multiple Attachments Strip -->
+  <div class="file-preview-strip" id="fileStrip"></div>
+
+  <!-- Bottom Input Bar -->
+  <footer class="bottom-bar">
+    <!-- Input Pickers -->
+    <!-- 1. Send Files (Docs, PDF, etc. - MULTIPLE) -->
+    <input type="file" id="filePicker" style="display: none;" multiple accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/zip" />
+    
+    <!-- 2. Direct Camera Capture -->
+    <input type="file" id="cameraPicker" style="display: none;" accept="image/*" capture="environment" />
+    
+    <!-- 3. Photo Gallery (Images - MULTIPLE) -->
+    <input type="file" id="galleryPicker" style="display: none;" accept="image/*" multiple />
+
+    <!-- 1. Plus Icon -> Send Files -->
+    <button class="icon-action" id="plusBtn" title="Send Files (PDF, Docs, etc.)">
+      <i data-lucide="plus-circle" style="width: 24px; height: 24px;"></i>
+    </button>
+
+    <!-- 2. Camera Icon -> Open Camera -->
+    <button class="icon-action" id="cameraBtn" title="Take Photo">
+      <i data-lucide="camera" style="width: 24px; height: 24px;"></i>
+    </button>
+
+    <!-- 3. Gallery Icon -> Pick Multiple Photos -->
+    <button class="icon-action" id="galleryBtn" title="Send Photos">
+      <i data-lucide="image" style="width: 24px; height: 24px;"></i>
+    </button>
+
+    <!-- 4. Mic Icon -> Voice Message -->
+    <button class="icon-action" id="micBtn" title="Record Voice">
+      <i data-lucide="mic" style="width: 24px; height: 24px;"></i>
+    </button>
+
+    <!-- Voice Recording Status -->
+    <div class="recording-banner" id="recBanner">
+      <i data-lucide="disc-3" style="width: 16px; height: 16px;"></i>
+      <span>Recording...</span>
+      <span id="recTimer" style="margin-left: auto; font-weight: bold;">00:00</span>
+    </div>
+
+    <!-- Message Text Field -->
+    <div class="input-pill" id="inputPill">
+      <input type="text" class="msg-field" id="msgInput" placeholder="Message" autocomplete="off" />
+      <div class="pill-emoji"><i data-lucide="smile" style="width: 20px; height: 20px;"></i></div>
+    </div>
+
+    <!-- Send Button -->
+    <button class="icon-action" id="submitBtn">
+      <i data-lucide="thumbs-up" id="submitIcon" style="width: 24px; height: 24px;"></i>
+    </button>
+  </footer>
+
+  <!-- Info Modal -->
+  <div class="modal-backdrop" id="infoModal">
+    <div class="modal-content">
+      <img class="modal-avatar" id="modalAvatar" alt="" />
+      <div class="modal-title">JepongDevxyz AI</div>
+      <div class="modal-dev">Dev: Jay-Ar Lee Espiritu</div>
+      <div class="modal-copyright">© 2026 - Jepong Devxyz. All rights reserved.</div>
+      <button class="modal-close-btn" id="closeModalBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API_ENDPOINT = window.location.pathname.endsWith('.html') 
+    ? '/api/webhook' 
+    : window.location.pathname;
+
+  const BOT_AVATAR_URL = "avatar.jpg";
+
+  function setAvatarSrc(imgEl) {
+    if (!imgEl) return;
+    imgEl.src = BOT_AVATAR_URL;
+    imgEl.onerror = () => {
+      imgEl.src = "https://ui-avatars.com/api/?name=Jepong+AI&background=0084ff&color=fff";
+    };
+  }
+
+  setAvatarSrc(document.getElementById('mainHeaderAvatar'));
+  setAvatarSrc(document.getElementById('modalAvatar'));
+
+  lucide.createIcons();
+
+  let sessionId = sessionStorage.getItem('ai_session_id');
+  if (!sessionId) {
+    sessionId = 'web_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
+    sessionStorage.setItem('ai_session_id', sessionId);
+  }
+
+  const chatStream = document.getElementById('chatStream');
+  const msgInput = document.getElementById('msgInput');
+  const submitBtn = document.getElementById('submitBtn');
+  
+  // Pickers & Buttons
+  const filePicker = document.getElementById('filePicker');
+  const cameraPicker = document.getElementById('cameraPicker');
+  const galleryPicker = document.getElementById('galleryPicker');
+  
+  const plusBtn = document.getElementById('plusBtn');
+  const cameraBtn = document.getElementById('cameraBtn');
+  const galleryBtn = document.getElementById('galleryBtn');
+  const micBtn = document.getElementById('micBtn');
+
+  const recBanner = document.getElementById('recBanner');
+  const inputPill = document.getElementById('inputPill');
+  const recTimer = document.getElementById('recTimer');
+  const fileStrip = document.getElementById('fileStrip');
+  const resetChatBtn = document.getElementById('resetChatBtn');
+
+  // Status Indicator
+  const chatStatusText = document.getElementById('chatStatusText');
+  const onlineBadge = document.getElementById('onlineBadge');
+
+  const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+  let lastActiveTimestamp = parseInt(localStorage.getItem('ai_last_active_time') || Date.now());
+
+  function recordActivity() {
+    lastActiveTimestamp = Date.now();
+    localStorage.setItem('ai_last_active_time', lastActiveTimestamp);
+    updateStatusDisplay();
+  }
+
+  function formatAgo(diffMs) {
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) return 'Active just now';
+    if (minutes < 60) return `Active ${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `Active ${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `Active ${days}d ago`;
+  }
+
+  function updateStatusDisplay() {
+    const now = Date.now();
+    const diff = now - lastActiveTimestamp;
+
+    if (diff < IDLE_TIMEOUT_MS) {
+      chatStatusText.textContent = 'Active now';
+      chatStatusText.classList.add('online');
+      onlineBadge.classList.add('visible');
+    } else {
+      chatStatusText.textContent = formatAgo(diff);
+      chatStatusText.classList.remove('online');
+      onlineBadge.classList.remove('visible');
+    }
+  }
+
+  updateStatusDisplay();
+  setInterval(updateStatusDisplay, 15000);
+
+  // Modal Setup
+  const infoBtn = document.getElementById('infoBtn');
+  const infoModal = document.getElementById('infoModal');
+  const closeModalBtn = document.getElementById('closeModalBtn');
+
+  infoBtn.addEventListener('click', () => infoModal.classList.add('active'));
+  closeModalBtn.addEventListener('click', () => infoModal.classList.remove('active'));
+  infoModal.addEventListener('click', (e) => {
+    if (e.target === infoModal) infoModal.classList.remove('active');
+  });
+
+  // Multiple Attachments Storage
+  let selectedAttachments = [];
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let recordSeconds = 0;
+  let recordInterval = null;
+
+  function updateSendButtonState() {
+    if (msgInput.value.trim().length > 0 || selectedAttachments.length > 0) {
+      submitBtn.innerHTML = '<i data-lucide="send-horizontal" style="width: 24px; height: 24px;"></i>';
+    } else {
+      submitBtn.innerHTML = '<i data-lucide="thumbs-up" style="width: 24px; height: 24px;"></i>';
+    }
+    lucide.createIcons();
+  }
+
+  msgInput.addEventListener('input', () => {
+    recordActivity();
+    updateSendButtonState();
+  });
+
+  // Render attachment chips in the strip
+  function renderAttachmentStrip() {
+    fileStrip.innerHTML = '';
+    if (selectedAttachments.length === 0) {
+      fileStrip.classList.remove('active');
+      updateSendButtonState();
+      return;
+    }
+
+    selectedAttachments.forEach((att, index) => {
+      const chip = document.createElement('div');
+      chip.className = 'attachment-chip';
+      chip.innerHTML = `
+        <i data-lucide="paperclip" style="width: 14px; height: 14px;"></i>
+        <span>${att.name}</span>
+        <button class="chip-remove" data-index="${index}">✕</button>
+      `;
+      fileStrip.appendChild(chip);
+    });
+
+    fileStrip.classList.add('active');
+    lucide.createIcons();
+    updateSendButtonState();
+
+    fileStrip.querySelectorAll('.chip-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const idx = parseInt(e.currentTarget.getAttribute('data-index'));
+        selectedAttachments.splice(idx, 1);
+        renderAttachmentStrip();
+      });
+    });
+  }
+
+  // Handle incoming file arrays
+  function processFiles(files) {
+    if (!files || files.length === 0) return;
+    recordActivity();
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        selectedAttachments.push({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          base64: reader.result.split(',')[1]
+        });
+        renderAttachmentStrip();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Hook button clicks to pickers
+  plusBtn.addEventListener('click', () => filePicker.click());
+  cameraBtn.addEventListener('click', () => cameraPicker.click());
+  galleryBtn.addEventListener('click', () => galleryPicker.click());
+
+  filePicker.addEventListener('change', (e) => { processFiles(e.target.files); filePicker.value = ''; });
+  cameraPicker.addEventListener('change', (e) => { processFiles(e.target.files); cameraPicker.value = ''; });
+  galleryPicker.addEventListener('change', (e) => { processFiles(e.target.files); galleryPicker.value = ''; });
+
+  // Voice Recorder
+  micBtn.addEventListener('click', async () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+
+      mediaRecorder.onstart = () => {
+        recordActivity();
+        micBtn.classList.add('recording');
+        inputPill.style.display = 'none';
+        recBanner.classList.add('active');
+        recordSeconds = 0;
+        recTimer.textContent = '00:00';
+
+        recordInterval = setInterval(() => {
+          recordSeconds++;
+          const mins = String(Math.floor(recordSeconds / 60)).padStart(2, '0');
+          const secs = String(recordSeconds % 60).padStart(2, '0');
+          recTimer.textContent = `${mins}:${secs}`;
+        }, 1000);
+      };
+
+      mediaRecorder.onstop = () => {
+        clearInterval(recordInterval);
+        micBtn.classList.remove('recording');
+        inputPill.style.display = 'flex';
+        recBanner.classList.remove('active');
+
+        const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+        const reader = new FileReader();
+        reader.onload = () => {
+          handleSend('', [{
+            name: `Voice (${recordSeconds}s)`,
+            mimeType: 'audio/mp3',
+            base64: reader.result.split(',')[1]
+          }]);
+        };
+        reader.readAsDataURL(audioBlob);
+        stream.getTracks().forEach(t => t.stop());
+      };
+
+      mediaRecorder.start();
+    } catch (err) {
+      alert('Paki-allow ang mikropono sa browser.');
+    }
+  });
+
+  function renderBotResponse(bubbleEl, promptText, answerText) {
+    bubbleEl.innerHTML = `
+      <div class="quote-header">.ᐟ Boss : ' ${promptText} '</div>
+      <hr class="quote-divider" />
+      <div>${answerText}</div>
+    `;
+  }
+
+  function appendChat(text, sender, attachmentList = []) {
+    const row = document.createElement('div');
+    row.className = `message-row ${sender}`;
+
+    if (sender === 'bot') {
+      const avatarImg = document.createElement('img');
+      avatarImg.className = 'tiny-avatar';
+      setAvatarSrc(avatarImg);
+      row.appendChild(avatarImg);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if (attachmentList.length > 0) {
+      const wrap = document.createElement('div');
+      wrap.className = 'attachment-tags-wrap';
+      attachmentList.forEach(att => {
+        const metaSpan = document.createElement('div');
+        metaSpan.className = 'attachment-indicator';
+        metaSpan.innerHTML = `📎 ${att.name}`;
+        wrap.appendChild(metaSpan);
+      });
+      bubble.appendChild(wrap);
+    }
+
+    const contentBox = document.createElement('div');
+    contentBox.textContent = text;
+    bubble.appendChild(contentBox);
+
+    row.appendChild(bubble);
+    chatStream.appendChild(row);
+    chatStream.scrollTop = chatStream.scrollHeight;
+    return bubble;
+  }
+
+  // Send Controller
+  async function handleSend(overrideText = null, overrideAttachments = null) {
+    recordActivity();
+    const rawVal = overrideText !== null ? overrideText : msgInput.value.trim();
+    const currentList = overrideAttachments || [...selectedAttachments];
+    const finalMsg = rawVal || (currentList.length > 0 ? '' : '👍');
+
+    appendChat(finalMsg, 'user', currentList);
+
+    msgInput.value = '';
+    selectedAttachments = [];
+    renderAttachmentStrip();
+
+    const botBubble = appendChat('...', 'bot');
+
+    try {
+      const res = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          isWebChat: true,
+          sessionId: sessionId,
+          message: finalMsg,
+          attachments: currentList
+        })
+      });
+
+      const data = await res.json();
+      recordActivity();
+
+      if (data && data.reply) {
+        const promptLabel = finalMsg || (currentList.length > 0 ? `${currentList.length} files attached` : 'Message');
+        renderBotResponse(botBubble, promptLabel, data.reply);
+      } else {
+        botBubble.textContent = data.error || 'Medyo busy ang server, paki-ulit.';
+      }
+    } catch (err) {
+      botBubble.textContent = 'Medyo busy ang server, paki-ulit.';
+    } finally {
+      chatStream.scrollTop = chatStream.scrollHeight;
+    }
+  }
+
+  submitBtn.addEventListener('click', () => handleSend());
+  msgInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
+  resetChatBtn.addEventListener('click', () => {
+    chatStream.innerHTML = '';
+    handleSend('/reset');
+  });
+</script>
+
+</body>
+</html>
