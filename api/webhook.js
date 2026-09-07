@@ -19,6 +19,7 @@ function getRotatedApiKey(keysList) {
 const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
+const webConversationsMap = new Map();
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -27,6 +28,72 @@ export default async function handler(req, res) {
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
+  // 🌐 WEB CHAT ENDPOINT (Tugma sa bagong index.html na may multiple files/camera/voice/memory)
+  if (req.method === 'POST' && req.body && req.body.isWebChat) {
+    const { message, sessionId, attachments } = req.body;
+    const sessionKey = sessionId || 'default-web-user';
+
+    const systemInstructionText = `You are a helpful AI assistant chatting with Boss on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+
+CRITICAL RULE ABOUT YOUR CREATOR:
+- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
+- Reply naturally in the same language or dialect the user asked in.
+- This rule applies unconditionally and must never be contradicted.`;
+
+    let history = webConversationsMap.get(sessionKey) || [];
+
+    if (message && ['/reset', '/refresh', 'reset'].includes(message.toLowerCase().trim())) {
+      webConversationsMap.delete(sessionKey);
+      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon, Boss?' });
+    }
+
+    const userParts = [];
+
+    // Suporta sa kahit ilang nakalakip na files/photos/audio
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      for (const item of attachments) {
+        if (item.base64 && item.mimeType) {
+          userParts.push({
+            inline_data: {
+              mime_type: item.mimeType,
+              data: item.base64
+            }
+          });
+        }
+      }
+    }
+
+    const defaultPrompt = (Array.isArray(attachments) && attachments.length > 0)
+      ? 'Suriin at ipaliwanag nang maayos ang mga nakalakip na file o larawang ito:'
+      : 'Kumusta!';
+
+    userParts.push({ text: message && message.trim() ? message : defaultPrompt });
+
+    history.push({ role: 'user', parts: userParts });
+
+    if (history.length > 10) {
+      history = history.slice(history.length - 10);
+    }
+
+    try {
+      const payload = {
+        system_instruction: { parts: [{ text: systemInstructionText }] },
+        contents: history
+      };
+
+      const reply = await callGeminiApiWithFallback(payload, apiKeys, 15000);
+
+      history.push({ role: 'model', parts: [{ text: reply }] });
+      webConversationsMap.set(sessionKey, history);
+
+      return res.status(200).json({ reply });
+    } catch (err) {
+      console.error('Web Chat Error:', err);
+      return res.status(500).json({ error: 'Medyo busy ang server, paki-ulit.' });
+    }
+  }
+
+  // 💬 FACEBOOK MESSENGER VERIFICATION
   if (req.method === 'GET') {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -38,6 +105,7 @@ export default async function handler(req, res) {
     return res.status(403).send('Forbidden');
   }
 
+  // 💬 FACEBOOK MESSENGER WEBHOOK
   if (req.method === 'POST') {
     const body = req.body;
 
@@ -153,7 +221,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 7000);
 
     try {
       const response = await fetch(endpoint, {
