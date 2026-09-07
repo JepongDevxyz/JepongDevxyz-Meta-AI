@@ -1,4 +1,4 @@
-// Mga tunay at opisyal na Gemini models para maiwasan ang error
+// Opisyal at aktibong Gemini models
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
   'gemini-flash-latest',    // 2nd Option: Stable Standard Flash kung busy o may downtime ang Lite
@@ -6,33 +6,19 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash'
 ];
 
-// 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
 let currentKeyIndex = 0;
 
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
-  return keysList[currentKeyIndex % keysList.length];
-}
-
-function moveToNextKey(keysList) {
-  if (!keysList || keysList.length <= 1) return;
+  const key = keysList[currentKeyIndex % keysList.length];
+  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
-  console.log(`[KEY ROTATION] Inilipat ang active key sa index: ${currentKeyIndex}`);
+  return key;
 }
 
-// 🧠 IN-MEMORY Caches (Deduplication, User Custom Personas, & Chat History)
 const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
-
-// Helper para hindi mag-leak ang memory ng server
-function setWithLimit(map, key, value, maxSize = 500) {
-  if (map.size >= maxSize) {
-    const firstKey = map.keys().next().value;
-    map.delete(firstKey);
-  }
-  map.set(key, value);
-}
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -41,7 +27,6 @@ export default async function handler(req, res) {
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
-  // Facebook Webhook Verification (GET)
   if (req.method === 'GET') {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -53,133 +38,120 @@ export default async function handler(req, res) {
     return res.status(403).send('Forbidden');
   }
 
-  // Webhook Event Receiving (POST)
   if (req.method === 'POST') {
     const body = req.body;
 
     if (body.object === 'page') {
       try {
-        await processWebhookEntries(body.entry || [], apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
+        for (const entry of body.entry) {
+          if (!entry.messaging || !entry.messaging[0]) continue;
+
+          const webhookEvent = entry.messaging[0];
+          const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
+          const messageId = webhookEvent.message ? webhookEvent.message.mid : null;
+
+          if (!senderPsid) continue;
+
+          if (messageId) {
+            if (processedMessageIds.has(messageId)) {
+              console.log(`[DEDUPLICATION] Skipped duplicate: ${messageId}`);
+              continue;
+            }
+            processedMessageIds.add(messageId);
+            setTimeout(() => processedMessageIds.delete(messageId), 300000);
+          }
+
+          if (webhookEvent.postback) {
+            const payload = webhookEvent.postback.payload;
+            await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
+            continue;
+          }
+
+          if (webhookEvent.message && webhookEvent.message.attachments) {
+            const attachment = webhookEvent.message.attachments[0];
+
+            if (attachment.type === 'audio') {
+              await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+              const voiceReply = await processAudioMessage(attachment.payload.url, apiKeys, senderPsid);
+              await sendLongTextMessage(senderPsid, voiceReply, PAGE_ACCESS_TOKEN);
+              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+              continue;
+            }
+
+            if (attachment.type === 'image') {
+              await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+              const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, apiKeys, senderPsid);
+              await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
+              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+              continue;
+            }
+
+            if (attachment.type === 'file') {
+              await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+              const docReply = await processDocumentFile(attachment.payload.url, apiKeys, senderPsid);
+              await sendLongTextMessage(senderPsid, docReply, PAGE_ACCESS_TOKEN);
+              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+              continue;
+            }
+          }
+
+          if (webhookEvent.message && !webhookEvent.message.is_echo) {
+            const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
+            const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
+            const finalMessage = quickReplyPayload || userMessage;
+
+            if (!finalMessage) continue;
+
+            if (finalMessage.toLowerCase().includes('periodic table')) {
+              await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
+              await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
+              continue;
+            }
+
+            const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
+            if (handled) continue;
+
+            await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
+
+            if (/https?:\/\/[^\s]+/i.test(finalMessage)) {
+              const urlSummary = await fetchAndSummarizeUrl(finalMessage, apiKeys, senderPsid);
+              await sendLongTextMessage(senderPsid, urlSummary, PAGE_ACCESS_TOKEN);
+              await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
+              continue;
+            }
+
+            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+          }
+        }
       } catch (err) {
-        console.error("[Async Processing Error]:", err);
+        console.error("Processing Error:", err);
       }
+
       return res.status(200).send('EVENT_RECEIVED');
     }
     return res.status(404).send('Not Found');
   }
-
   return res.status(405).send('Method Not Allowed');
 }
 
-async function processWebhookEntries(entries, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID) {
-  for (const entry of entries) {
-    if (!entry.messaging || !Array.isArray(entry.messaging)) continue;
-
-    for (const webhookEvent of entry.messaging) {
-      const senderPsid = webhookEvent.sender ? webhookEvent.sender.id : null;
-      const messageId = webhookEvent.message ? webhookEvent.message.mid : null;
-
-      if (!senderPsid) continue;
-
-      // Deduplication check
-      if (messageId) {
-        if (processedMessageIds.has(messageId)) {
-          console.log(`[DEDUPLICATION] Na-skip ang duplicate: ${messageId}`);
-          continue;
-        }
-        processedMessageIds.add(messageId);
-        setTimeout(() => processedMessageIds.delete(messageId), 300000);
-      }
-
-      // Postback Handling
-      if (webhookEvent.postback) {
-        const payload = webhookEvent.postback.payload;
-        await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
-        continue;
-      }
-
-      // Attachment Handling (Voice, Image, Document)
-      if (webhookEvent.message && webhookEvent.message.attachments) {
-        const attachment = webhookEvent.message.attachments[0];
-
-        if (attachment.type === 'audio') {
-          await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-          const voiceReply = await processAudioMessage(attachment.payload.url, apiKeys, senderPsid);
-          await sendLongTextMessage(senderPsid, voiceReply, PAGE_ACCESS_TOKEN);
-          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-          continue;
-        }
-
-        if (attachment.type === 'image') {
-          await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-          const visionReply = await analyzeHomeworkWithGemini(attachment.payload.url, apiKeys, senderPsid);
-          await sendLongTextMessage(senderPsid, visionReply, PAGE_ACCESS_TOKEN);
-          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-          continue;
-        }
-
-        if (attachment.type === 'file') {
-          await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-          const docReply = await processDocumentFile(attachment.payload.url, apiKeys, senderPsid);
-          await sendLongTextMessage(senderPsid, docReply, PAGE_ACCESS_TOKEN);
-          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-          continue;
-        }
-      }
-
-      // Standard Text Handling
-      if (webhookEvent.message && !webhookEvent.message.is_echo) {
-        const userMessage = webhookEvent.message.text ? webhookEvent.message.text.trim() : '';
-        const quickReplyPayload = webhookEvent.message.quick_reply ? webhookEvent.message.quick_reply.payload : null;
-        const finalMessage = quickReplyPayload || userMessage;
-
-        if (!finalMessage) continue;
-
-        if (finalMessage.toLowerCase().includes('periodic table')) {
-          await sendTextMessage(senderPsid, "🧪 **Periodic Table of Elements (HD)**", PAGE_ACCESS_TOKEN);
-          await sendMediaAttachment(senderPsid, 'image', 'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg', PAGE_ACCESS_TOKEN);
-          continue;
-        }
-
-        const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
-        if (handled) continue;
-
-        await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
-
-        if (/https?:\/\/[^\s]+/i.test(finalMessage)) {
-          const urlSummary = await fetchAndSummarizeUrl(finalMessage, apiKeys, senderPsid);
-          await sendLongTextMessage(senderPsid, urlSummary, PAGE_ACCESS_TOKEN);
-          await sendTypingOff(senderPsid, PAGE_ACCESS_TOKEN);
-          continue;
-        }
-
-        await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
-      }
-    }
-  }
-}
-
 /**
- * ⚡ SAFE ROTATIONAL FALLBACK ENGINE WITH GOOGLE SEARCH GROUNDING
+ * Rotational API Call Engine
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
-  if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na available.');
-  
-  const requestBody = JSON.parse(JSON.stringify(payload));
-  requestBody.tools = [{ google_search: {} }];
+  if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
 
+  const requestBody = JSON.parse(JSON.stringify(payload));
   const startTime = Date.now();
   let lastError = null;
-  const maxAttempts = 5; 
-  let attemptCount = 0;
+  const maxAttempts = Math.min(apiKeys.length * 2, 6);
 
-  while (attemptCount < maxAttempts) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() - startTime > maxTotalTimeoutMs) break;
 
-    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
+    const modelName = GEMINI_MODELS_FALLBACK[attempt % GEMINI_MODELS_FALLBACK.length];
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-    
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
 
@@ -196,30 +168,20 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
 
       if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return data.candidates[0].content.parts[0].text;
-      } 
-      
-      console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} failed with status ${response.status}`);
-      
-      if (response.status === 429 || data.error?.status === "RESOURCE_EXHAUSTED") {
-        console.warn(`🚨 Quota Limit sa key index ${currentKeyIndex}. Nililipat sa susunod na key...`);
-        moveToNextKey(apiKeys);
-      } else if (response.status === 400) {
-        throw new Error(`Bad Request (400): ${data.error?.message || 'Suriin ang payload format.'}`);
       }
 
-      lastError = new Error(data.error?.message || `API Error Status: ${response.status}`);
+      console.warn(`[Key Switch] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
+      lastError = new Error(data.error?.message || `API Status ${response.status}`);
     } catch (err) {
       clearTimeout(timer);
-      console.error(`[Fetch Exception]`, err.message);
+      console.error(`[Fetch Error Attempt ${attempt + 1}]`, err.message);
       lastError = err;
-      moveToNextKey(apiKeys);
     }
 
-    attemptCount++;
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
+  throw lastError || new Error('Abala ang lahat ng API keys.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -246,7 +208,6 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     const mathProblem = input.replace(/^\/math\s*/i, '').trim();
     const reply = await getDirectGeminiResponse(`Solve step-by-step: ${mathProblem}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🧮 **Math Solution:**\n\n${reply}`, pageToken);
-    await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
@@ -255,7 +216,6 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     const codeQuery = input.replace(/^\/code\s*/i, '').trim();
     const reply = await getDirectGeminiResponse(`Help with code: ${codeQuery}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `💻 **Code Solution:**\n\n${reply}`, pageToken);
-    await sendTypingOff(senderPsid, pageToken);
     return true;
   }
 
@@ -274,14 +234,9 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     const base64Data = Buffer.from(buffer).toString("base64");
 
     const payload = {
-      system_instruction: { 
-        parts: [{ 
-          text: "You are an AI Assistant created by Jepong Devxyz ( Jay-Ar Lee Espiritu ). Listen to this audio, transcribe, and answer in Tagalog/English. When asked who made/created you, credit only Jepong Devxyz ( Jay-Ar Lee Espiritu )." 
-        }] 
-      },
       contents: [{
         parts: [
-          { text: "Respond to this speech:" },
+          { text: "Transcribe and respond to this audio in Tagalog/English:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
       }]
@@ -299,10 +254,9 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     const base64Data = Buffer.from(buffer).toString("base64");
 
     const payload = {
-      system_instruction: { parts: [{ text: "Read and analyze this document." }] },
       contents: [{
         parts: [
-          { text: "Summarize this:" },
+          { text: "Summarize this document clearly:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
       }]
@@ -331,16 +285,13 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
   try {
     await sendMediaAttachment(senderPsid, 'image', imageUrl, pageToken);
   } catch (error) {
-    await sendTextMessage(senderPsid, "❌ Error sa pag-load ng larawan.", pageToken);
+    await sendTextMessage(senderPsid, "❌ Error loading image.", pageToken);
   }
 }
 
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      system_instruction: {
-        parts: [{ text: "You are an AI Assistant created by Jepong Devxyz ( Jay-Ar Lee Espiritu ). If asked about your creator, always credit Jepong Devxyz ( Jay-Ar Lee Espiritu )." }]
-      },
       contents: [{ parts: [{ text: promptText }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 8000);
@@ -358,7 +309,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Analyze this image:" },
+          { text: "Analyze and explain what is shown in this image:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
       }]
@@ -377,7 +328,7 @@ async function getFacebookUserName(senderPsid, pageToken) {
       return data.first_name;
     }
   } catch (err) {
-    console.error("Error fetching Facebook user first name:", err);
+    console.error("Error fetching Facebook name:", err);
   }
   return 'Boss';
 }
@@ -387,22 +338,20 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     const firstName = await getFacebookUserName(senderPsid, pageToken);
     const lowerMsg = userMessage.toLowerCase();
 
-    // Reset command
-    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode', 'tama na ang akting'].some(cmd => lowerMsg.includes(cmd))) {
+    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
       userPersonasMap.delete(senderPsid);
       userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang aking mode at memory. Bumalik na ako sa pagiging normal na AI assistant mo, ${firstName}!`, pageToken);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
       await sendTypingOff(senderPsid, pageToken);
       return;
     }
 
-    // Roleplay trigger detection
     let currentPersona = userPersonasMap.get(senderPsid) || null;
-    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|parang|gawin mo akong|acting|pretend/i.test(userMessage);
+    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
 
     if (isPersonaTrigger && !currentPersona) {
       currentPersona = userMessage;
-      setWithLimit(userPersonasMap, senderPsid, currentPersona);
+      userPersonasMap.set(senderPsid, currentPersona);
     }
 
     let history = userConversationsMap.get(senderPsid) || [];
@@ -411,25 +360,16 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     if (history.length > 10) {
       history = history.slice(history.length - 10);
     }
-    setWithLimit(userConversationsMap, senderPsid, history);
 
-    // Clean system instruction na may malinaw na attribution kay Jepong Devxyz
-    let systemInstructionText = `You are a helpful and intelligent AI Assistant chatting with ${firstName} on Facebook Messenger.
+    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
-CREATOR ATTRIBUTION RULE:
-- You were created and developed by Jepong Devxyz ( Jay-Ar Lee Espiritu ).
-- When asked who created you, who made you, who is your developer, or who owns you (e.g. "sino gumawa sayo", "who made you", "sino creator mo", "sinong developer mo"), you must state clearly and directly that you were created by Jepong Devxyz ( Jay-Ar Lee Espiritu ). Do not mention Google, OpenAI, or anyone else as your creator.
-
-FORMATTING RULE:
-Always format your response cleanly without overlapping characters, text, or multiple nested borders. Follow this simple layout:
-
-.ᐟ ${firstName} : ' ${userMessage} '
-━━━━━━━━━━━━━━━━━━
-
-[Your clear, direct, and well-spaced answer here, addressing the user as ${firstName} when appropriate]`;
+CRITICAL RULE ABOUT YOUR CREATOR:
+- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
+- Reply naturally in the same language or dialect the user asked in.
+- This rule applies unconditionally and must never be contradicted.`;
 
     if (currentPersona) {
-      systemInstructionText += `\n\nCRITICAL ROLEPLAY RULE: You must strictly adopt this persona/behavior requested by the user: "${currentPersona}". Maintain this roleplay consistently in all your responses until the user commands you to reset or return to normal mode.`;
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
     }
 
     const payload = {
@@ -438,69 +378,43 @@ Always format your response cleanly without overlapping characters, text, or mul
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
-    
-    history.push({ role: 'model', parts: [{ text: aiReply }] });
-    setWithLimit(userConversationsMap, senderPsid, history);
 
-    await sendLongTextMessage(senderPsid, aiReply, pageToken);
+    history.push({ role: 'model', parts: [{ text: aiReply }] });
+    userConversationsMap.set(senderPsid, history);
+
+    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
+    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
 
   } catch (error) {
     console.error("AI Processing Error:", error);
-    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit.", pageToken);
+    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
     await sendTypingOff(senderPsid, pageToken);
   }
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      console.error("[FB TypingOn Error]:", err);
-    }
-  } catch (e) {
-    console.error("[Network Error TypingOn]:", e.message);
-  }
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
+  });
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      console.error("[FB TypingOff Error]:", err);
-    }
-  } catch (e) {
-    console.error("[Network Error TypingOff]:", e.message);
-  }
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
+  });
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: senderPsid },
-        message: { attachment: { type: type, payload: { url: url, is_reusable: true } } }
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      console.error("[FB Media Error]:", err);
-    }
-  } catch (e) {
-    console.error("[Network Error Media]:", e.message);
-  }
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
+  });
 }
 
 async function sendLongTextMessage(senderPsid, responseText, pageToken) {
@@ -516,17 +430,9 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      console.error("[FB SendText Error]:", err);
-    }
-  } catch (e) {
-    console.error("[Network Error SendText]:", e.message);
-  }
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
+  });
 }
