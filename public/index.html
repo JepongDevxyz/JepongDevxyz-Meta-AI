@@ -13,7 +13,7 @@
   <style>
     :root {
       --bg-black: #000000;
-      --bubble-bot: #2e2f30;
+      --bubble-bot: #262626;
       --bubble-user: #0084ff;
       --messenger-blue: #0084ff;
       --text-white: #ffffff;
@@ -153,7 +153,7 @@
       overflow-x: hidden;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
     }
 
     .chat-area::-webkit-scrollbar { display: none; }
@@ -179,10 +179,10 @@
     }
 
     .bubble {
-      max-width: 78%;
+      max-width: 76%;
       padding: 10px 14px;
       font-size: 0.95rem;
-      line-height: 1.45;
+      line-height: 1.4;
       word-break: break-word;
       overflow-wrap: anywhere;
       white-space: pre-wrap;
@@ -198,19 +198,6 @@
       background-color: var(--bubble-bot);
       color: var(--text-white);
       border-radius: 18px 18px 18px 4px;
-    }
-
-    .quote-header {
-      font-size: 0.95rem;
-      color: var(--text-white);
-      margin-bottom: 8px;
-    }
-
-    .quote-divider {
-      border: 0;
-      height: 1px;
-      background-color: var(--border-gray);
-      margin-bottom: 10px;
     }
 
     .attachment-tags-wrap {
@@ -483,7 +470,6 @@
 </div>
 
 <script>
-  // Tiyak na nakaturo sa Vercel API endpoint
   const API_ENDPOINT = '/api/webhook';
   const BOT_AVATAR_URL = 'IMG_20260119_161406.jpg';
 
@@ -707,12 +693,8 @@
     }
   });
 
-  function renderBotResponse(bubbleEl, promptText, answerText) {
-    bubbleEl.innerHTML = `
-      <div class="quote-header">.ᐟ Boss : ' ${promptText} '</div>
-      <hr class="quote-divider" />
-      <div>${answerText}</div>
-    `;
+  function renderBotResponse(bubbleEl, answerText) {
+    bubbleEl.textContent = answerText;
   }
 
   function appendChat(text, sender, attachmentList = []) {
@@ -789,8 +771,7 @@
       recordActivity();
 
       if (res.ok && data && data.reply) {
-        const promptLabel = finalMsg || (currentList.length > 0 ? `${currentList.length} files attached` : 'Message');
-        renderBotResponse(botBubble, promptLabel, data.reply);
+        renderBotResponse(botBubble, data.reply);
       } else {
         botBubble.textContent = data.error || 'Medyo busy ang server, paki-ulit.';
       }
