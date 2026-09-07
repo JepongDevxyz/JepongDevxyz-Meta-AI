@@ -437,50 +437,34 @@
 
   <!-- Bottom Input Bar -->
   <footer class="bottom-bar">
-    <!-- Input Pickers -->
-    <!-- 1. Send Files (Docs, PDF, etc. - MULTIPLE) -->
     <input type="file" id="filePicker" style="display: none;" multiple accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/zip" />
-    
-    <!-- 2. Direct Camera Capture -->
     <input type="file" id="cameraPicker" style="display: none;" accept="image/*" capture="environment" />
-    
-    <!-- 3. Photo Gallery (Images - MULTIPLE) -->
     <input type="file" id="galleryPicker" style="display: none;" accept="image/*" multiple />
 
-    <!-- 1. Plus Icon -> Send Files -->
     <button class="icon-action" id="plusBtn" title="Send Files (PDF, Docs, etc.)">
       <i data-lucide="plus-circle" style="width: 24px; height: 24px;"></i>
     </button>
-
-    <!-- 2. Camera Icon -> Open Camera -->
     <button class="icon-action" id="cameraBtn" title="Take Photo">
       <i data-lucide="camera" style="width: 24px; height: 24px;"></i>
     </button>
-
-    <!-- 3. Gallery Icon -> Pick Multiple Photos -->
     <button class="icon-action" id="galleryBtn" title="Send Photos">
       <i data-lucide="image" style="width: 24px; height: 24px;"></i>
     </button>
-
-    <!-- 4. Mic Icon -> Voice Message -->
     <button class="icon-action" id="micBtn" title="Record Voice">
       <i data-lucide="mic" style="width: 24px; height: 24px;"></i>
     </button>
 
-    <!-- Voice Recording Status -->
     <div class="recording-banner" id="recBanner">
       <i data-lucide="disc-3" style="width: 16px; height: 16px;"></i>
       <span>Recording...</span>
       <span id="recTimer" style="margin-left: auto; font-weight: bold;">00:00</span>
     </div>
 
-    <!-- Message Text Field -->
     <div class="input-pill" id="inputPill">
       <input type="text" class="msg-field" id="msgInput" placeholder="Message" autocomplete="off" />
       <div class="pill-emoji"><i data-lucide="smile" style="width: 20px; height: 20px;"></i></div>
     </div>
 
-    <!-- Send Button -->
     <button class="icon-action" id="submitBtn">
       <i data-lucide="thumbs-up" id="submitIcon" style="width: 24px; height: 24px;"></i>
     </button>
@@ -499,17 +483,15 @@
 </div>
 
 <script>
-  const API_ENDPOINT = window.location.pathname.endsWith('.html') 
-    ? '/api/webhook' 
-    : window.location.pathname;
-
-  const BOT_AVATAR_URL = "IMG_20260119_161406.jpg";
+  // Tiyak na nakaturo sa Vercel API endpoint
+  const API_ENDPOINT = '/api/webhook';
+  const BOT_AVATAR_URL = 'IMG_20260119_161406.jpg';
 
   function setAvatarSrc(imgEl) {
     if (!imgEl) return;
     imgEl.src = BOT_AVATAR_URL;
     imgEl.onerror = () => {
-      imgEl.src = "https://ui-avatars.com/api/?name=Jepong+AI&background=0084ff&color=fff";
+      imgEl.src = 'https://ui-avatars.com/api/?name=Jepong+AI&background=0084ff&color=fff';
     };
   }
 
@@ -528,7 +510,6 @@
   const msgInput = document.getElementById('msgInput');
   const submitBtn = document.getElementById('submitBtn');
   
-  // Pickers & Buttons
   const filePicker = document.getElementById('filePicker');
   const cameraPicker = document.getElementById('cameraPicker');
   const galleryPicker = document.getElementById('galleryPicker');
@@ -544,7 +525,6 @@
   const fileStrip = document.getElementById('fileStrip');
   const resetChatBtn = document.getElementById('resetChatBtn');
 
-  // Status Indicator
   const chatStatusText = document.getElementById('chatStatusText');
   const onlineBadge = document.getElementById('onlineBadge');
 
@@ -585,7 +565,6 @@
   updateStatusDisplay();
   setInterval(updateStatusDisplay, 15000);
 
-  // Modal Setup
   const infoBtn = document.getElementById('infoBtn');
   const infoModal = document.getElementById('infoModal');
   const closeModalBtn = document.getElementById('closeModalBtn');
@@ -596,7 +575,6 @@
     if (e.target === infoModal) infoModal.classList.remove('active');
   });
 
-  // Multiple Attachments Storage
   let selectedAttachments = [];
   let mediaRecorder = null;
   let audioChunks = [];
@@ -617,7 +595,6 @@
     updateSendButtonState();
   });
 
-  // Render attachment chips in the strip
   function renderAttachmentStrip() {
     fileStrip.innerHTML = '';
     if (selectedAttachments.length === 0) {
@@ -650,7 +627,6 @@
     });
   }
 
-  // Handle incoming file arrays
   function processFiles(files) {
     if (!files || files.length === 0) return;
     recordActivity();
@@ -669,7 +645,6 @@
     });
   }
 
-  // Hook button clicks to pickers
   plusBtn.addEventListener('click', () => filePicker.click());
   cameraBtn.addEventListener('click', () => cameraPicker.click());
   galleryBtn.addEventListener('click', () => galleryPicker.click());
@@ -678,7 +653,6 @@
   cameraPicker.addEventListener('change', (e) => { processFiles(e.target.files); cameraPicker.value = ''; });
   galleryPicker.addEventListener('change', (e) => { processFiles(e.target.files); galleryPicker.value = ''; });
 
-  // Voice Recorder
   micBtn.addEventListener('click', async () => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       mediaRecorder.stop();
@@ -777,7 +751,6 @@
     return bubble;
   }
 
-  // Send Controller
   async function handleSend(overrideText = null, overrideAttachments = null) {
     recordActivity();
     const rawVal = overrideText !== null ? overrideText : msgInput.value.trim();
@@ -804,16 +777,25 @@
         })
       });
 
-      const data = await res.json();
+      let data;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const textResp = await res.text();
+        data = { error: textResp };
+      }
+
       recordActivity();
 
-      if (data && data.reply) {
+      if (res.ok && data && data.reply) {
         const promptLabel = finalMsg || (currentList.length > 0 ? `${currentList.length} files attached` : 'Message');
         renderBotResponse(botBubble, promptLabel, data.reply);
       } else {
         botBubble.textContent = data.error || 'Medyo busy ang server, paki-ulit.';
       }
     } catch (err) {
+      console.error('Fetch Error:', err);
       botBubble.textContent = 'Medyo busy ang server, paki-ulit.';
     } finally {
       chatStream.scrollTop = chatStream.scrollHeight;
