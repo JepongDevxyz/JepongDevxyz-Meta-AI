@@ -1,9 +1,9 @@
 // Opisyal at aktibong Gemini models
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-latest',
-  'gemini-1.5-pro',
-  'gemini-2.0-flash'
+  'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
+  'gemini-flash-latest',    // 2nd Option: Stable Standard Flash kung busy o may downtime ang Lite
+  'gemini-3.7-flash',       // 3rd Option: Fallback kung talagang kailangan
+  'gemini-3.6-flash'
 ];
 
 let currentKeyIndex = 0;
