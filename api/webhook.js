@@ -1,30 +1,24 @@
-// Mga tunay at opisyal na Gemini models para maiwasan ang error
+// Opisyal at aktibong Gemini models
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
-  'gemini-flash-latest',    // 2nd Option: Stable Standard Flash kung busy o may downtime ang Lite
-  'gemini-3.7-flash',       // 3rd Option: Fallback kung talagang kailangan
-  'gemini-3.8-flash'
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-1.5-pro',
+  'gemini-2.0-flash'
 ];
 
-// 🔄 GLOBAL ROTATIONAL INDEX FOR KEYS
 let currentKeyIndex = 0;
 
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
-  // Kumuha ng key base sa kasalukuyang index nang hindi muna ito pinalalaki rito upang maiwasan ang race condition
-  return keysList[currentKeyIndex % keysList.length];
-}
-
-function moveToNextKey(keysList) {
-  if (!keysList || keysList.length <= 1) return;
+  const key = keysList[currentKeyIndex % keysList.length];
+  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
-  console.log(`[KEY ROTATION] Inilipat ang active key sa index: ${currentKeyIndex}`);
+  return key;
 }
 
-// 🧠 IN-MEMORY Caches (Deduplication, User Custom Personas, & Chat History)
 const processedMessageIds = new Set();
-const userPersonasMap = new Map(); // Persona bawat user
-const userConversationsMap = new Map(); // Chat history para sa continuous conversation
+const userPersonasMap = new Map();
+const userConversationsMap = new Map();
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -141,30 +135,25 @@ export default async function handler(req, res) {
 }
 
 /**
- * ⚡ SAFE ROTATIONAL FALLBACK ENGINE WITH GOOGLE SEARCH GROUNDING
+ * Rotational API Call Engine
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
-  if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key.');
-  
-  const requestBody = JSON.parse(JSON.stringify(payload));
-  requestBody.tools = [{ googleSearch: {} }];
+  if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
 
+  const requestBody = JSON.parse(JSON.stringify(payload));
   const startTime = Date.now();
   let lastError = null;
-  
-  // Nilimitahan sa 5 maximum attempts bawat event para hindi ma-ban ang IP address ng server mo
-  const maxAttempts = 5; 
-  let attemptCount = 0;
+  const maxAttempts = Math.min(apiKeys.length * 2, 6);
 
-  while (attemptCount < maxAttempts) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() - startTime > maxTotalTimeoutMs) break;
 
-    const modelName = GEMINI_MODELS_FALLBACK[attemptCount % GEMINI_MODELS_FALLBACK.length];
     const apiKey = getRotatedApiKey(apiKeys);
+    const modelName = GEMINI_MODELS_FALLBACK[attempt % GEMINI_MODELS_FALLBACK.length];
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-    
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000); // 6 na segundo bawat request limit
+    const timer = setTimeout(() => controller.abort(), 6000);
 
     try {
       const response = await fetch(endpoint, {
@@ -179,36 +168,20 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
 
       if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
         return data.candidates[0].content.parts[0].text;
-      } 
-      
-      console.warn(`[Attempt ${attemptCount + 1}] Model ${modelName} failed with status ${response.status}`);
-      
-      // KUNG RESOURCE EXHAUSTED O RATE LIMIT, LILIPAT SA SUSUNOD NA API KEY
-      if (response.status === 429 || data.error?.status === "RESOURCE_EXHAUSTED") {
-        console.warn(`🚨 Quota Limit na ang key na ito! Nililipat ang active key...`);
-        moveToNextKey(apiKeys);
-      } else if (response.status === 400) {
-        // Kapag Bad Request (400), may mali sa system instruction o inline_data structure mo.
-        // Hindi ito maaayos ng pagpapalit ng susi, kaya ihinto na agad ang loop para hindi masunog ang ibang keys.
-        throw new Error(`Bad Request (400): ${data.error?.message || 'Suriin ang payload format.'}`);
       }
 
-      lastError = new Error(data.error?.message || `API Error Status: ${response.status}`);
+      console.warn(`[Key Switch] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
+      lastError = new Error(data.error?.message || `API Status ${response.status}`);
     } catch (err) {
       clearTimeout(timer);
-      console.error(`[Fetch Exception]`, err.message);
+      console.error(`[Fetch Error Attempt ${attempt + 1}]`, err.message);
       lastError = err;
-      
-      // Kung nagka-network timeout o crash, lumipat na rin ng susi para makasiguro
-      moveToNextKey(apiKeys);
     }
 
-    attemptCount++;
-    // Sandaling magpahinga para hindi magmukhang DDoS attack sa server
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  throw lastError || new Error('Kasalukuyang abala ang lahat ng modelo, subukan muli sandali.');
+  throw lastError || new Error('Abala ang lahat ng API keys.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -219,11 +192,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
       await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**
-
-• Active Keys: **${apiKeys.length}**
-• Current Key Index: **${currentKeyIndex}**
-• Status: **Operational 🟢**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Current Key Index: **${currentKeyIndex}**\n• Status: **Operational 🟢**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -238,7 +207,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const mathProblem = input.replace(/^\/math\s*/i, '').trim();
     const reply = await getDirectGeminiResponse(`Solve step-by-step: ${mathProblem}`, apiKeys, senderPsid);
-    await sendLongTextMessage(senderPsid, `🧮 **Math Solution:**\n\n\${reply}`, pageToken);
+    await sendLongTextMessage(senderPsid, `🧮 **Math Solution:**\n\n${reply}`, pageToken);
     return true;
   }
 
@@ -246,12 +215,12 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const codeQuery = input.replace(/^\/code\s*/i, '').trim();
     const reply = await getDirectGeminiResponse(`Help with code: ${codeQuery}`, apiKeys, senderPsid);
-    await sendLongTextMessage(senderPsid, `💻 **Code Solution:**\n\n\${reply}`, pageToken);
+    await sendLongTextMessage(senderPsid, `💻 **Code Solution:**\n\n${reply}`, pageToken);
     return true;
   }
 
   if (['/commands', '/help'].includes(lowerText)) {
-    const helpMsg = "📚 AI Help Menu\n\n🎨 \`/imagen [prompt]\` \n🎓 \`/math [prob]\`, \`/code [task]\`\n🔄 \`/reset\` o \`/refresh\` (Ibalik sa normal mode)";
+    const helpMsg = "📚 AI Help Menu\n\n🎨 `/imagen [prompt]`\n🎓 `/math [prob]`, `/code [task]`\n🔄 `/reset` o `/refresh` (Ibalik sa normal mode)";
     await sendTextMessage(senderPsid, helpMsg, pageToken);
     return true;
   }
@@ -265,10 +234,9 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     const base64Data = Buffer.from(buffer).toString("base64");
 
     const payload = {
-      system_instruction: { parts: [{ text: "You are an AI Assistant. Listen to this audio, transcribe, and answer in Tagalog/English." }] },
       contents: [{
         parts: [
-          { text: "Respond to this speech:" },
+          { text: "Transcribe and respond to this audio in Tagalog/English:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
       }]
@@ -286,10 +254,9 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     const base64Data = Buffer.from(buffer).toString("base64");
 
     const payload = {
-      system_instruction: { parts: [{ text: "Read and analyze this document." }] },
       contents: [{
         parts: [
-          { text: "Summarize this:" },
+          { text: "Summarize this document clearly:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
       }]
@@ -303,7 +270,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read and summarize this link: \${url}` }] }]
+      contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (e) {
@@ -314,7 +281,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
 async function generateAndSendImage(senderPsid, prompt, pageToken) {
   await sendTextMessage(senderPsid, "🖼️ Ginagawa ang larawan...", pageToken);
   const seed = Math.floor(Math.random() * 1000000);
-  const imageUrl = `https://image.pollinations.ai/prompt/\${encodeURIComponent(prompt)}/image.jpg?width=1024&height=1024&nologo=true&seed=\${seed}`;
+  const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}/image.jpg?width=1024&height=1024&nologo=true&seed=${seed}`;
   try {
     await sendMediaAttachment(senderPsid, 'image', imageUrl, pageToken);
   } catch (error) {
@@ -342,7 +309,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Analyze this image:" },
+          { text: "Analyze and explain what is shown in this image:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
       }]
@@ -355,13 +322,13 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
 
 async function getFacebookUserName(senderPsid, pageToken) {
   try {
-    const response = await fetch(`https://graph.facebook.com/v19.0/\${senderPsid}?fields=first_name&access_token=\${pageToken}`);
+    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
     const data = await response.json();
     if (data && data.first_name) {
       return data.first_name;
     }
   } catch (err) {
-    console.error("Error fetching Facebook user first name:", err);
+    console.error("Error fetching Facebook name:", err);
   }
   return 'Boss';
 }
@@ -371,16 +338,16 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     const firstName = await getFacebookUserName(senderPsid, pageToken);
     const lowerMsg = userMessage.toLowerCase();
 
-    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode', 'tama na ang akting'].some(cmd => lowerMsg.includes(cmd))) {
+    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
       userPersonasMap.delete(senderPsid);
       userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang aking mode at memory. Bumalik na ako sa pagiging normal na AI assistant mo, \${firstName}!`, pageToken);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
       await sendTypingOff(senderPsid, pageToken);
       return;
     }
 
     let currentPersona = userPersonasMap.get(senderPsid) || null;
-    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|parang|gawin mo akong|acting|pretend/i.test(userMessage);
+    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
 
     if (isPersonaTrigger && !currentPersona) {
       currentPersona = userMessage;
@@ -393,17 +360,10 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     if (history.length > 10) {
       history = history.slice(history.length - 10);
     }
-    userConversationsMap.set(senderPsid, history);
 
-    let systemInstructionText = `You are an AI Assistant chatting with \${firstName} on Facebook Messenger. Respond dynamically in the same language as the user (Tagalog/English). ` +
-      `Always display the user's original question cleanly at the very top using a modern bold style and clean divider (no overlapping lines), ` +
-      `adhering strictly to this layout:\n\n` +
-      `.ᐟ \${firstName} : ' \${userMessage} '\n` +
-      `━━━━━━━━━━━━━━━━━━\n\n` +
-      `[Your direct, professional, and well-spaced answer here, addressing the user as \${firstName} when appropriate]`;
-
+    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond in Tagalog or English depending on user language.`;
     if (currentPersona) {
-      systemInstructionText += `\n\nCRITICAL ROLEPLAY RULE: You must strictly adopt this persona/behavior requested by the user: "\${currentPersona}". Maintain this roleplay consistently in all your responses until the user commands you to reset or return to normal mode.`;
+      systemInstructionText += ` Follow this character persona: "${currentPersona}".`;
     }
 
     const payload = {
@@ -412,22 +372,23 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
-    
+
     history.push({ role: 'model', parts: [{ text: aiReply }] });
     userConversationsMap.set(senderPsid, history);
 
-    await sendLongTextMessage(senderPsid, aiReply, pageToken);
+    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
+    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
     await sendTypingOff(senderPsid, pageToken);
 
   } catch (error) {
     console.error("AI Processing Error:", error);
-    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit.", pageToken);
+    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
     await sendTypingOff(senderPsid, pageToken);
   }
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=\${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
@@ -435,7 +396,7 @@ async function sendTypingOn(senderPsid, pageToken) {
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=\${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
@@ -443,7 +404,7 @@ async function sendTypingOff(senderPsid, pageToken) {
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=\${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
@@ -455,7 +416,7 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
   if (responseText.length <= MAX_LIMIT) {
     await sendTextMessage(senderPsid, responseText, pageToken);
   } else {
-    const chunks = responseText.match(new RegExp(`.{1,\${MAX_LIMIT}}`, 'g')) || [];
+    const chunks = responseText.match(new RegExp(`.{1,${MAX_LIMIT}}`, 'g')) || [];
     for (const chunk of chunks) {
       await sendTextMessage(senderPsid, chunk, pageToken);
     }
@@ -463,7 +424,7 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=\${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
