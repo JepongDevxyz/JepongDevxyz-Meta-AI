@@ -26,7 +26,7 @@ function getRotatedApiKey(keysList) {
 }
 
 /**
- * 🌐 TOTOONG INTERNET SEARCH ENGINE (Tavily AI Search + Open SearXNG Fallback)
+ * 🌐 2026 REAL-TIME SEARCH & WEATHER ENGINE
  */
 async function performFreeWebSearch(query) {
   const cleanQuery = query
@@ -35,7 +35,29 @@ async function performFreeWebSearch(query) {
 
   if (!cleanQuery) return null;
 
-  // 1. Tavily Search API (Kung may TAVILY_API_KEY ka sa Vercel Environment Variables)
+  // 1. Live Weather Check (Open-Meteo)
+  if (/weather|panahon|ulan|init|bagyo/i.test(query)) {
+    try {
+      const placeMatch = query.replace(/(anong|ano ang|kumusta|panahon|weather|sa|ngayon|dito)\b/gi, '').trim();
+      const place = placeMatch || 'Guimba';
+      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`);
+      const geoData = await geoRes.json();
+      if (geoData.results && geoData.results[0]) {
+        const { latitude, longitude, name, admin1, country } = geoData.results[0];
+        const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`);
+        const wData = await wRes.json();
+        if (wData.current) {
+          const c = wData.current;
+          return `Real-Time Live Weather for ${name}, ${admin1 || ''} (${country}): Temp: ${c.temperature_2m}°C (Feels like: ${c.apparent_temperature}°C), Humidity: ${c.relative_humidity_2m}%, Rain: ${c.precipitation}mm, Wind: ${c.wind_speed_10m}km/h`;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Idagdag ang taong 2026 sa web query para pinakabago ang resulta
+  const searchWithYear = `${cleanQuery} 2026`;
+
+  // 2. Tavily Search API (Kung configured sa Vercel)
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (tavilyKey) {
     try {
@@ -44,7 +66,7 @@ async function performFreeWebSearch(query) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           api_key: tavilyKey,
-          query: cleanQuery,
+          query: searchWithYear,
           search_depth: 'basic',
           max_results: 3
         })
@@ -60,7 +82,7 @@ async function performFreeWebSearch(query) {
     }
   }
 
-  // 2. Open Public SearXNG JSON API (100% Libre, walang API key, totoong live web search)
+  // 3. Open Public SearXNG Instances (Libre, 2026 Updated)
   const instances = [
     'https://search.ononoki.org',
     'https://searx.be',
@@ -72,7 +94,7 @@ async function performFreeWebSearch(query) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3500);
 
-      const searchUrl = `${instance}/search?q=${encodeURIComponent(cleanQuery)}&format=json&language=tl,en`;
+      const searchUrl = `${instance}/search?q=${encodeURIComponent(searchWithYear)}&format=json&language=tl,en`;
       const res = await fetch(searchUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
         signal: controller.signal
@@ -93,28 +115,8 @@ async function performFreeWebSearch(query) {
         }
       }
     } catch (e) {
-      // Mag-try sa susunod na instance kung busy
       continue;
     }
-  }
-
-  // 3. Fallback: Open-Meteo Weather kung panahon ang tanong
-  if (/weather|panahon|ulan|init|bagyo/i.test(query)) {
-    try {
-      const placeMatch = query.replace(/(anong|ano ang|kumusta|panahon|weather|sa|ngayon|dito)\b/gi, '').trim();
-      const place = placeMatch || 'Guimba';
-      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`);
-      const geoData = await geoRes.json();
-      if (geoData.results && geoData.results[0]) {
-        const { latitude, longitude, name, country } = geoData.results[0];
-        const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`);
-        const wData = await wRes.json();
-        if (wData.current) {
-          const c = wData.current;
-          return `Live Weather Report for ${name}, ${country}: Temp: ${c.temperature_2m}°C (Feels like: ${c.apparent_temperature}°C), Humidity: ${c.relative_humidity_2m}%, Rain: ${c.precipitation}mm, Wind: ${c.wind_speed_10m}km/h`;
-        }
-      }
-    } catch (e) {}
   }
 
   return null;
@@ -131,6 +133,14 @@ export default async function handler(req, res) {
   const ADMIN_PSID = process.env.ADMIN_PSID;
   const apiKeys = getApiKeysList();
 
+  const currentDatePH = new Date().toLocaleDateString('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
   // 🌐 WEB CHAT ENDPOINT
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
@@ -138,17 +148,22 @@ export default async function handler(req, res) {
 
     const systemInstructionText = `You are a smart, accurate AI assistant chatting with Boss on a Web UI.
 
+CURRENT TEMPORAL CONTEXT (CRITICAL):
+- The current year is 2026.
+- Current Date: ${currentDatePH} (Philippine Standard Time).
+- Never claim your knowledge is stuck in 2023 or 2024. All responses must be aligned with 2026 and latest information.
+
 AI NAME & IDENTITY:
 - Official Name: JepongDevxyz (or JepongDevxyz AI).
-- Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
+- Kapag tinanong ka kung sino ka o ano pangalan mo, dapat mong sabihing: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang pangalan.
 
 LANGUAGE, SEARCH & SPELLING RULES:
-- If Live Internet Search Data is provided, use it accurately to provide fresh, real-time facts.
-- Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila (grammar). Mahigpit na ipinagbabawal ang mga gawa-gawang salita o typo (halimbawa: isulat ang "maitutulong", HUWAG kailanman "maitalong").
-- Tumugon nang natural sa wikang ginagamit ng kausap (Tagalog, Taglish, English, Bisaya, atbp.).
+- If Live Internet Search Data is provided, always use it to provide up-to-date 2026 facts.
+- Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila. Mahigpit na ipinagbabawal ang typo o imbento na salita (e.g., isulat ang "maitutulong", HUWAG kailanman "maitalong").
+- Tumugon nang natural sa wikang gamit ng kausap.
 
 CRITICAL RULE ABOUT YOUR CREATOR:
-- Kapag tinanong kung sino ang gumawa, nag-program, nag-develop, o lumikha sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+- Kapag tinanong kung sino ang gumawa sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
 
     let history = webConversationsMap.get(sessionKey) || [];
 
@@ -177,7 +192,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
     try {
       const searchResults = await performFreeWebSearch(finalPrompt);
       if (searchResults) {
-        finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
+        finalPrompt += `\n\n[Live 2026 Internet Search Context]:\n${searchResults}`;
       }
     } catch (err) {}
 
@@ -298,7 +313,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
               continue;
             }
 
-            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN);
+            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, currentDatePH);
           }
         }
       } catch (err) {
@@ -379,7 +394,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const query = input.replace(/^\/search\s*/i, '').trim();
     const results = await performFreeWebSearch(query);
-    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto batay sa live web search result:\n\n${results || 'Walang nahanap na live data.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto para sa kasalukuyang taon (2026) batay sa live search data:\n\n${results || 'Walang nahanap na live data.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🌐 **Web Search Result:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -508,7 +523,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, currentDatePH) {
   try {
     const firstName = 'Boss';
     const lowerMsg = userMessage.toLowerCase();
@@ -532,13 +547,13 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     let history = userConversationsMap.get(senderPsid) || [];
     let messageToSend = userMessage;
 
-    // Automatic Search Trigger para sa lahat ng tanong na may kaugnayan sa realtime facts
+    // Automatic Search Trigger para sa 2026 realtime facts
     const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i.test(userMessage);
     if (isSearchQuery) {
       try {
         const searchData = await performFreeWebSearch(userMessage);
         if (searchData) {
-          messageToSend = `${userMessage}\n\n[Live Internet Search Data]:\n${searchData}`;
+          messageToSend = `${userMessage}\n\n[Live 2026 Internet Search Data]:\n${searchData}`;
         }
       } catch (err) {
         console.warn("Search fetch failed:", err.message);
@@ -553,19 +568,22 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
 
     let systemInstructionText = `You are a helpful, smart AI assistant chatting with ${firstName} on Facebook Messenger.
 
+CURRENT TEMPORAL CONTEXT (CRITICAL):
+- The current year is 2026.
+- Current Date: ${currentDatePH} (Philippine Standard Time).
+- Your knowledge cutoff is not restricted to 2023 or 2024. All responses must be aligned with 2026.
+
 AI NAME & IDENTITY:
 - Official Name: JepongDevxyz (or JepongDevxyz AI).
-- Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
+- Kapag tinanong ka kung sino ka o ano pangalan mo, dapat mong sabihing: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang pangalan.
 
 LANGUAGE, SEARCH & SPELLING RULES:
-- If [Live Internet Search Data] is provided in the prompt, ALWAYS base your answer on it to provide up-to-date, real-time facts.
+- If [Live 2026 Internet Search Data] is provided in the prompt, ALWAYS base your answer on it to provide up-to-date, real-time facts.
 - Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (halimbawa: gamitin ang "maitutulong", HUWAG kailanman "maitalong").
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
-- Kapag tinanong kung sino ang gumawa, nag-program, nag-develop, o lumikha sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).
-- Reply naturally in the same language or dialect the user asked in.
-- This rule applies unconditionally and must never be contradicted.`;
+- Kapag tinanong kung sino ang gumawa sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
 
     if (currentPersona) {
       systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu). If asked about your AI identity, state that you are JepongDevxyz.`;
