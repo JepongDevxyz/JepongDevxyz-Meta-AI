@@ -26,69 +26,95 @@ function getRotatedApiKey(keysList) {
 }
 
 /**
- * 🌐 100% LIBRENG SEARCH ENGINE (Wikipedia API + DuckDuckGo JSON may Timeout)
+ * 🌐 TOTOONG INTERNET SEARCH ENGINE (Tavily AI Search + Open SearXNG Fallback)
  */
 async function performFreeWebSearch(query) {
   const cleanQuery = query
-    .replace(/^(search|mag-search|hanapin|ano ang balita sa|updates sa|sino si|ano ang|tungkol kay|tungkol sa)\s+/i, '')
+    .replace(/^(search|mag-search|hanapin|ano ang balita sa|updates sa|anong|ano ang)\s+/i, '')
     .trim();
 
   if (!cleanQuery) return null;
 
-  // 1. Wikipedia Summary API (Mabilis, hindi bina-block sa Vercel/Cloud servers)
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
-
-    const wikiUrl = `https://tl.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`;
-    let wikiRes = await fetch(wikiUrl, {
-      headers: { 'User-Agent': 'JepongDevxyzBot/1.0 (contact@jepongdev.xyz)' },
-      signal: controller.signal
-    });
-
-    clearTimeout(timeout);
-
-    if (!wikiRes.ok) {
-      const enController = new AbortController();
-      const enTimeout = setTimeout(() => enController.abort(), 2500);
-      wikiRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`, {
-        headers: { 'User-Agent': 'JepongDevxyzBot/1.0 (contact@jepongdev.xyz)' },
-        signal: enController.signal
+  // 1. Tavily Search API (Kung may TAVILY_API_KEY ka sa Vercel Environment Variables)
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  if (tavilyKey) {
+    try {
+      const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: tavilyKey,
+          query: cleanQuery,
+          search_depth: 'basic',
+          max_results: 3
+        })
       });
-      clearTimeout(enTimeout);
-    }
-
-    if (wikiRes.ok) {
-      const wikiData = await wikiRes.json();
-      if (wikiData.extract) {
-        return wikiData.extract;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          return data.results.map(r => `• ${r.title}: ${r.content}`).join('\n\n');
+        }
       }
+    } catch (e) {
+      console.warn('[Tavily Search Failed]:', e.message);
     }
-  } catch (e) {
-    console.warn("[Wiki Search Skipped/Timeout]:", e.message);
   }
 
-  // 2. DuckDuckGo Instant Answer API (JSON format)
-  try {
-    const ddgController = new AbortController();
-    const ddgTimeout = setTimeout(() => ddgController.abort(), 2500);
+  // 2. Open Public SearXNG JSON API (100% Libre, walang API key, totoong live web search)
+  const instances = [
+    'https://search.ononoki.org',
+    'https://searx.be',
+    'https://baresearch.org'
+  ];
 
-    const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: ddgController.signal
-    });
+  for (const instance of instances) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
 
-    clearTimeout(ddgTimeout);
+      const searchUrl = `${instance}/search?q=${encodeURIComponent(cleanQuery)}&format=json&language=tl,en`;
+      const res = await fetch(searchUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        signal: controller.signal
+      });
 
-    if (ddgRes.ok) {
-      const ddgData = await ddgRes.json();
-      if (ddgData.AbstractText) return ddgData.AbstractText;
-      if (Array.isArray(ddgData.RelatedTopics) && ddgData.RelatedTopics[0]?.Text) {
-        return ddgData.RelatedTopics.slice(0, 2).map(t => t.Text).join('\n');
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.results && data.results.length > 0) {
+          const topResults = data.results
+            .slice(0, 3)
+            .map(r => `• ${r.title}: ${r.content || ''}`)
+            .filter(Boolean);
+          if (topResults.length > 0) {
+            return topResults.join('\n\n');
+          }
+        }
       }
+    } catch (e) {
+      // Mag-try sa susunod na instance kung busy
+      continue;
     }
-  } catch (e) {
-    console.warn("[DDG Search Skipped/Timeout]:", e.message);
+  }
+
+  // 3. Fallback: Open-Meteo Weather kung panahon ang tanong
+  if (/weather|panahon|ulan|init|bagyo/i.test(query)) {
+    try {
+      const placeMatch = query.replace(/(anong|ano ang|kumusta|panahon|weather|sa|ngayon|dito)\b/gi, '').trim();
+      const place = placeMatch || 'Guimba';
+      const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`);
+      const geoData = await geoRes.json();
+      if (geoData.results && geoData.results[0]) {
+        const { latitude, longitude, name, country } = geoData.results[0];
+        const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`);
+        const wData = await wRes.json();
+        if (wData.current) {
+          const c = wData.current;
+          return `Live Weather Report for ${name}, ${country}: Temp: ${c.temperature_2m}°C (Feels like: ${c.apparent_temperature}°C), Humidity: ${c.relative_humidity_2m}%, Rain: ${c.precipitation}mm, Wind: ${c.wind_speed_10m}km/h`;
+        }
+      }
+    } catch (e) {}
   }
 
   return null;
@@ -116,7 +142,8 @@ AI NAME & IDENTITY:
 - Official Name: JepongDevxyz (or JepongDevxyz AI).
 - Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
 
-LANGUAGE & SPELLING RULES:
+LANGUAGE, SEARCH & SPELLING RULES:
+- If Live Internet Search Data is provided, use it accurately to provide fresh, real-time facts.
 - Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila (grammar). Mahigpit na ipinagbabawal ang mga gawa-gawang salita o typo (halimbawa: isulat ang "maitutulong", HUWAG kailanman "maitalong").
 - Tumugon nang natural sa wikang ginagamit ng kausap (Tagalog, Taglish, English, Bisaya, atbp.).
 
@@ -147,16 +174,12 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     let finalPrompt = message && message.trim() ? message : 'Kumusta!';
 
-    if (/(balita|sino si|ano ang|kailan|update|presyo|weather|search|score)/i.test(finalPrompt)) {
-      try {
-        const searchResults = await performFreeWebSearch(finalPrompt);
-        if (searchResults) {
-          finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
-        }
-      } catch (err) {
-        console.warn("Search check skipped:", err.message);
+    try {
+      const searchResults = await performFreeWebSearch(finalPrompt);
+      if (searchResults) {
+        finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
       }
-    }
+    } catch (err) {}
 
     userParts.push({ text: finalPrompt });
     history.push({ role: 'user', parts: userParts });
@@ -356,7 +379,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const query = input.replace(/^\/search\s*/i, '').trim();
     const results = await performFreeWebSearch(query);
-    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto batay sa sumusunod na impormasyon:\n\n${results || 'Walang nahanap na detalye.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto batay sa live web search result:\n\n${results || 'Walang nahanap na live data.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🌐 **Web Search Result:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -509,7 +532,8 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     let history = userConversationsMap.get(senderPsid) || [];
     let messageToSend = userMessage;
 
-    const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates sa|search|presyo|petsa|panahon|weather/i.test(userMessage);
+    // Automatic Search Trigger para sa lahat ng tanong na may kaugnayan sa realtime facts
+    const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i.test(userMessage);
     if (isSearchQuery) {
       try {
         const searchData = await performFreeWebSearch(userMessage);
@@ -517,7 +541,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
           messageToSend = `${userMessage}\n\n[Live Internet Search Data]:\n${searchData}`;
         }
       } catch (err) {
-        console.warn("Search fetch failed, proceeding with model base:", err.message);
+        console.warn("Search fetch failed:", err.message);
       }
     }
 
@@ -534,7 +558,7 @@ AI NAME & IDENTITY:
 - Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
 
 LANGUAGE, SEARCH & SPELLING RULES:
-- If Live Internet Search Data is provided in the prompt, use it accurately to provide up-to-date facts.
+- If [Live Internet Search Data] is provided in the prompt, ALWAYS base your answer on it to provide up-to-date, real-time facts.
 - Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (halimbawa: gamitin ang "maitutulong", HUWAG kailanman "maitalong").
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
