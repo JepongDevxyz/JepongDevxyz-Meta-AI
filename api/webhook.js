@@ -19,7 +19,7 @@ const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
 const webConversationsMap = new Map();
-const userNameCache = new Map(); // ⚡ Cache para mabilis makuha ang pangalan at tipid sa API call
+const userNameCache = new Map(); // In-memory cache para sa PSID -> First Name
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -201,7 +201,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine
+ * Rotational API Call Engine para sa Gemini
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -248,6 +248,104 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   }
 
   throw lastError || new Error('Abala ang lahat ng API keys.');
+}
+
+/**
+ * Kinukuha ang User First Name sa Facebook Graph API
+ */
+async function getFacebookUserName(senderPsid, pageToken) {
+  if (userNameCache.has(senderPsid)) {
+    return userNameCache.get(senderPsid);
+  }
+
+  try {
+    const url = `https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name,name&access_token=${pageToken}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.error) {
+      console.error("❌ FB Graph API Profile Error:", JSON.stringify(data.error));
+    } else {
+      const extractedName = data.first_name || (data.name ? data.name.trim().split(' ')[0] : null);
+      if (extractedName) {
+        console.log(`✅ [FB Graph] Nakuha ang first name: "${extractedName}" para sa PSID: ${senderPsid}`);
+        userNameCache.set(senderPsid, extractedName);
+        return extractedName;
+      }
+    }
+  } catch (err) {
+    console.error("❌ Network Error fetching FB profile:", err);
+  }
+
+  return 'User';
+}
+
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
+  try {
+    const firstName = await getFacebookUserName(senderPsid, pageToken);
+    const lowerMsg = userMessage.toLowerCase();
+
+    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
+      userPersonasMap.delete(senderPsid);
+      userConversationsMap.delete(senderPsid);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
+      await sendTypingOff(senderPsid, pageToken);
+      return;
+    }
+
+    let currentPersona = userPersonasMap.get(senderPsid) || null;
+    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
+
+    if (isPersonaTrigger && !currentPersona) {
+      currentPersona = userMessage;
+      userPersonasMap.set(senderPsid, currentPersona);
+    }
+
+    let history = userConversationsMap.get(senderPsid) || [];
+    history.push({ role: 'user', parts: [{ text: userMessage }] });
+
+    if (history.length > 10) {
+      history = history.slice(history.length - 10);
+    }
+
+    // 🎯 Mahigpit na prompt para tawagin ni Gemini ang first name
+    let systemInstructionText = `You are a helpful, conversational AI assistant talking to ${firstName} on Facebook Messenger.
+
+USER IDENTITY RULE:
+- The user's first name is "${firstName}".
+- You MUST address the user directly by their first name ("${firstName}") in your reply (e.g. greeting them, answering questions, or giving friendly remarks).
+
+LANGUAGE & TONE:
+- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+
+CRITICAL RULE ABOUT YOUR CREATOR:
+- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
+- Reply naturally in the same language or dialect the user asked in.
+- This rule applies unconditionally and must never be contradicted.`;
+
+    if (currentPersona) {
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Keep addressing the user as "${firstName}". Even while roleplaying, creator credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+    }
+
+    const payload = {
+      system_instruction: { parts: [{ text: systemInstructionText }] },
+      contents: history
+    };
+
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
+
+    history.push({ role: 'model', parts: [{ text: aiReply }] });
+    userConversationsMap.set(senderPsid, history);
+
+    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
+    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+
+  } catch (error) {
+    console.error("AI Processing Error:", error);
+    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+  }
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -383,98 +481,6 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return 'Error sa pag-analyze ng larawan.';
-  }
-}
-
-/**
- * Kinukuha ang First Name gamit ang Graph API na may in-memory caching
- */
-async function getFacebookUserName(senderPsid, pageToken) {
-  if (userNameCache.has(senderPsid)) {
-    return userNameCache.get(senderPsid);
-  }
-
-  try {
-    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name,name&access_token=${pageToken}`);
-    const data = await response.json();
-    
-    if (data && (data.first_name || data.name)) {
-      const name = data.first_name || data.name.split(' ')[0];
-      userNameCache.set(senderPsid, name);
-      return name;
-    }
-  } catch (err) {
-    console.error("Error fetching Facebook name:", err);
-  }
-
-  return 'kaibigan'; // Fallback kapag hindi binigay ng Facebook
-}
-
-async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
-  try {
-    const firstName = await getFacebookUserName(senderPsid, pageToken);
-    const lowerMsg = userMessage.toLowerCase();
-
-    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
-      userPersonasMap.delete(senderPsid);
-      userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
-      await sendTypingOff(senderPsid, pageToken);
-      return;
-    }
-
-    let currentPersona = userPersonasMap.get(senderPsid) || null;
-    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
-
-    if (isPersonaTrigger && !currentPersona) {
-      currentPersona = userMessage;
-      userPersonasMap.set(senderPsid, currentPersona);
-    }
-
-    let history = userConversationsMap.get(senderPsid) || [];
-    history.push({ role: 'user', parts: [{ text: userMessage }] });
-
-    if (history.length > 10) {
-      history = history.slice(history.length - 10);
-    }
-
-    // 💡 Malinaw na instruction para tawagin ng AI ang first name ng user
-    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. 
-
-PERSONALIZATION:
-- The user's first name is "${firstName}".
-- Always acknowledge or address the user directly by their first name ("${firstName}") naturally in your answers when suitable (especially in greetings, explanations, or closing remarks).
-
-LANGUAGE & TONE:
-- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
-
-CRITICAL RULE ABOUT YOUR CREATOR:
-- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
-- Reply naturally in the same language or dialect the user asked in.
-- This rule applies unconditionally and must never be contradicted.`;
-
-    if (currentPersona) {
-      systemInstructionText += ` Follow this character persona: "${currentPersona}". Keep addressing the user by their name (${firstName}) if appropriate. Even while roleplaying, if explicitly asked about your real-world creator, credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
-    }
-
-    const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history
-    };
-
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
-
-    history.push({ role: 'model', parts: [{ text: aiReply }] });
-    userConversationsMap.set(senderPsid, history);
-
-    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
-    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
-    await sendTypingOff(senderPsid, pageToken);
-
-  } catch (error) {
-    console.error("AI Processing Error:", error);
-    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
-    await sendTypingOff(senderPsid, pageToken);
   }
 }
 
