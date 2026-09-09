@@ -11,7 +11,6 @@ let currentKeyIndex = 0;
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const key = keysList[currentKeyIndex % keysList.length];
-  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
   return key;
 }
@@ -20,6 +19,7 @@ const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
 const webConversationsMap = new Map();
+const userNameCache = new Map(); // ⚡ Cache para mabilis makuha ang pangalan at tipid sa API call
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -28,12 +28,12 @@ export default async function handler(req, res) {
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
-  // 🌐 WEB CHAT ENDPOINT (Tugma sa bagong index.html na may multiple files/camera/voice/memory)
+  // 🌐 WEB CHAT ENDPOINT
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
 
-    const systemInstructionText = `You are a helpful AI assistant chatting with Boss on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    const systemInstructionText = `You are a helpful AI assistant chatting on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
 - Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
@@ -44,12 +44,11 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     if (message && ['/reset', '/refresh', 'reset'].includes(message.toLowerCase().trim())) {
       webConversationsMap.delete(sessionKey);
-      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon, Boss?' });
+      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon?' });
     }
 
     const userParts = [];
 
-    // Suporta sa kahit ilang nakalakip na files/photos/audio
     if (Array.isArray(attachments) && attachments.length > 0) {
       for (const item of attachments) {
         if (item.base64 && item.mimeType) {
@@ -68,7 +67,6 @@ CRITICAL RULE ABOUT YOUR CREATOR:
       : 'Kumusta!';
 
     userParts.push({ text: message && message.trim() ? message : defaultPrompt });
-
     history.push({ role: 'user', parts: userParts });
 
     if (history.length > 10) {
@@ -388,17 +386,28 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
+/**
+ * Kinukuha ang First Name gamit ang Graph API na may in-memory caching
+ */
 async function getFacebookUserName(senderPsid, pageToken) {
+  if (userNameCache.has(senderPsid)) {
+    return userNameCache.get(senderPsid);
+  }
+
   try {
-    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
+    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name,name&access_token=${pageToken}`);
     const data = await response.json();
-    if (data && data.first_name) {
-      return data.first_name;
+    
+    if (data && (data.first_name || data.name)) {
+      const name = data.first_name || data.name.split(' ')[0];
+      userNameCache.set(senderPsid, name);
+      return name;
     }
   } catch (err) {
     console.error("Error fetching Facebook name:", err);
   }
-  return 'Boss';
+
+  return 'kaibigan'; // Fallback kapag hindi binigay ng Facebook
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
@@ -429,7 +438,15 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       history = history.slice(history.length - 10);
     }
 
-    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    // 💡 Malinaw na instruction para tawagin ng AI ang first name ng user
+    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. 
+
+PERSONALIZATION:
+- The user's first name is "${firstName}".
+- Always acknowledge or address the user directly by their first name ("${firstName}") naturally in your answers when suitable (especially in greetings, explanations, or closing remarks).
+
+LANGUAGE & TONE:
+- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
 - Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
@@ -437,7 +454,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 - This rule applies unconditionally and must never be contradicted.`;
 
     if (currentPersona) {
-      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Keep addressing the user by their name (${firstName}) if appropriate. Even while roleplaying, if explicitly asked about your real-world creator, credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
     }
 
     const payload = {
