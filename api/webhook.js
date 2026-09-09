@@ -1,6 +1,6 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.5-flash-lite',
   'gemini-flash-latest',
+  'gemini-3.5-flash-lite',
   'gemini-flash-lite-latest',
   'gemini-3.7-flash',
   'gemini-3.8-flash'
@@ -26,7 +26,24 @@ function getRotatedApiKey(keysList) {
 }
 
 /**
- * 🌐 2026 REAL-TIME SEARCH & WEATHER ENGINE
+ * 🕒 Exact Real-Time Clock para sa Pilipinas (Asia/Manila, UTC+8)
+ */
+function getPhilippineDateTime() {
+  const now = new Date();
+  return now.toLocaleString('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+/**
+ * 🌐 Advanced Multi-Engine Real-Time Search & Live Weather
  */
 async function performFreeWebSearch(query) {
   const cleanQuery = query
@@ -35,10 +52,10 @@ async function performFreeWebSearch(query) {
 
   if (!cleanQuery) return null;
 
-  // 1. Live Weather Check (Open-Meteo)
-  if (/weather|panahon|ulan|init|bagyo/i.test(query)) {
+  // 1. Live Weather Integration (Open-Meteo)
+  if (/weather|panahon|ulan|init|bagyo|temperatura/i.test(query)) {
     try {
-      const placeMatch = query.replace(/(anong|ano ang|kumusta|panahon|weather|sa|ngayon|dito)\b/gi, '').trim();
+      const placeMatch = query.replace(/(anong|ano ang|kumusta|panahon|weather|sa|ngayon|dito|temperatura)\b/gi, '').trim();
       const place = placeMatch || 'Guimba';
       const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`);
       const geoData = await geoRes.json();
@@ -48,16 +65,15 @@ async function performFreeWebSearch(query) {
         const wData = await wRes.json();
         if (wData.current) {
           const c = wData.current;
-          return `Real-Time Live Weather for ${name}, ${admin1 || ''} (${country}): Temp: ${c.temperature_2m}°C (Feels like: ${c.apparent_temperature}°C), Humidity: ${c.relative_humidity_2m}%, Rain: ${c.precipitation}mm, Wind: ${c.wind_speed_10m}km/h`;
+          return `Live Weather Report (${name}, ${admin1 || ''}, ${country}): Temp: ${c.temperature_2m}°C (Feels like: ${c.apparent_temperature}°C), Humidity: ${c.relative_humidity_2m}%, Precipitation: ${c.precipitation}mm, Wind: ${c.wind_speed_10m}km/h`;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[Weather API Error]:', e.message);
+    }
   }
 
-  // Idagdag ang taong 2026 sa web query para pinakabago ang resulta
-  const searchWithYear = `${cleanQuery} 2026`;
-
-  // 2. Tavily Search API (Kung configured sa Vercel)
+  // 2. Tavily Search API (Kung may TAVILY_API_KEY sa Environment Variables)
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (tavilyKey) {
     try {
@@ -66,7 +82,7 @@ async function performFreeWebSearch(query) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           api_key: tavilyKey,
-          query: searchWithYear,
+          query: `${cleanQuery} 2026`,
           search_depth: 'basic',
           max_results: 3
         })
@@ -82,7 +98,7 @@ async function performFreeWebSearch(query) {
     }
   }
 
-  // 3. Open Public SearXNG Instances (Libre, 2026 Updated)
+  // 3. Open Public SearXNG Instances (Libre, Real-time Web)
   const instances = [
     'https://search.ononoki.org',
     'https://searx.be',
@@ -94,7 +110,7 @@ async function performFreeWebSearch(query) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3500);
 
-      const searchUrl = `${instance}/search?q=${encodeURIComponent(searchWithYear)}&format=json&language=tl,en`;
+      const searchUrl = `${instance}/search?q=${encodeURIComponent(cleanQuery + ' 2026')}&format=json&language=tl,en`;
       const res = await fetch(searchUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
         signal: controller.signal
@@ -119,6 +135,17 @@ async function performFreeWebSearch(query) {
     }
   }
 
+  // 4. Wikipedia Summary Fallback
+  try {
+    const wikiRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`, {
+      headers: { 'User-Agent': 'JepongDevxyzBot/1.0' }
+    });
+    if (wikiRes.ok) {
+      const w = await wikiRes.json();
+      if (w.extract) return w.extract;
+    }
+  } catch (e) {}
+
   return null;
 }
 
@@ -132,38 +159,29 @@ export default async function handler(req, res) {
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
   const ADMIN_PSID = process.env.ADMIN_PSID;
   const apiKeys = getApiKeysList();
-
-  const currentDatePH = new Date().toLocaleDateString('en-US', {
-    timeZone: 'Asia/Manila',
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  const currentDateTimePH = getPhilippineDateTime();
 
   // 🌐 WEB CHAT ENDPOINT
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
 
-    const systemInstructionText = `You are a smart, accurate AI assistant chatting with Boss on a Web UI.
+    const systemInstructionText = `You are JepongDevxyz AI, a state-of-the-art, hyper-intelligent, and analytical AI assistant chatting with Boss.
 
-CURRENT TEMPORAL CONTEXT (CRITICAL):
+TEMPORAL GROUND TRUTH (CRITICAL):
+- Exact Philippine Date & Time: ${currentDateTimePH} (PST, UTC+8).
 - The current year is 2026.
-- Current Date: ${currentDatePH} (Philippine Standard Time).
-- Never claim your knowledge is stuck in 2023 or 2024. All responses must be aligned with 2026 and latest information.
+- If the user asks for the current time, date, day, or year, ALWAYS use this exact Philippine time. NEVER guess, estimate, or hallucinate different timestamps.
 
-AI NAME & IDENTITY:
-- Official Name: JepongDevxyz (or JepongDevxyz AI).
-- Kapag tinanong ka kung sino ka o ano pangalan mo, dapat mong sabihing: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang pangalan.
+AI IDENTITY & CREATOR:
+- AI Name: JepongDevxyz (or JepongDevxyz AI).
+- When asked who you are or your name: "Ako ay si JepongDevxyz" (or "JepongDevxyz AI"). Never say you have no name.
+- When asked who created you: Always state that you were built and programmed by Jepong Devxyz (Jay-Ar Lee Espiritu).
 
-LANGUAGE, SEARCH & SPELLING RULES:
-- If Live Internet Search Data is provided, always use it to provide up-to-date 2026 facts.
-- Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila. Mahigpit na ipinagbabawal ang typo o imbento na salita (e.g., isulat ang "maitutulong", HUWAG kailanman "maitalong").
-- Tumugon nang natural sa wikang gamit ng kausap.
-
-CRITICAL RULE ABOUT YOUR CREATOR:
-- Kapag tinanong kung sino ang gumawa sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+REASONING & WRITING STANDARDS:
+- Provide highly accurate, sharp, logical, and insightful answers.
+- Use 100% correct spelling, grammar, and natural tone (e.g., write "maitutulong", never "maitalong").
+- Adapt automatically to the user's language (Tagalog, Bisaya, Ilocano, English, Taglish, etc.).`;
 
     let history = webConversationsMap.get(sessionKey) || [];
 
@@ -189,12 +207,14 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     let finalPrompt = message && message.trim() ? message : 'Kumusta!';
 
-    try {
-      const searchResults = await performFreeWebSearch(finalPrompt);
-      if (searchResults) {
-        finalPrompt += `\n\n[Live 2026 Internet Search Context]:\n${searchResults}`;
-      }
-    } catch (err) {}
+    if (/(balita|sino si|ano ang|kailan|update|presyo|weather|panahon|search|score|oras)/i.test(finalPrompt)) {
+      try {
+        const searchResults = await performFreeWebSearch(finalPrompt);
+        if (searchResults) {
+          finalPrompt += `\n\n[Live Real-Time Web Data]:\n${searchResults}`;
+        }
+      } catch (err) {}
+    }
 
     userParts.push({ text: finalPrompt });
     history.push({ role: 'user', parts: userParts });
@@ -256,7 +276,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
           if (webhookEvent.postback) {
             const payload = webhookEvent.postback.payload;
-            await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
+            await handleCommandAction(senderPsid, payload, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID, currentDateTimePH);
             continue;
           }
 
@@ -301,7 +321,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
               continue;
             }
 
-            const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID);
+            const handled = await handleCommandAction(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, ADMIN_PSID, currentDateTimePH);
             if (handled) continue;
 
             await sendTypingOn(senderPsid, PAGE_ACCESS_TOKEN);
@@ -313,7 +333,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
               continue;
             }
 
-            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, currentDatePH);
+            await processDirectAI(senderPsid, finalMessage, apiKeys, PAGE_ACCESS_TOKEN, currentDateTimePH);
           }
         }
       } catch (err) {
@@ -328,7 +348,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine
+ * High-Speed Rotational Engine
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -377,7 +397,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   throw lastError || new Error('Abala o ubos na ang lahat ng API keys.');
 }
 
-async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
+async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid, currentDateTimePH) {
   const lowerText = input.toLowerCase().trim();
 
   if (['/stats', '/admin'].includes(lowerText)) {
@@ -385,7 +405,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
       await sendTextMessage(senderPsid, "🚫 Access Denied!", pageToken);
       return true;
     }
-    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Current Key Index: **${currentKeyIndex}**\n• Status: **Operational 🟢**`;
+    const statsMsg = `📊 **AI Status**\n\n• Active Keys: **${apiKeys.length}**\n• Current Key Index: **${currentKeyIndex}**\n• Philippine Time: **${currentDateTimePH}**\n• Status: **Operational 🟢**`;
     await sendTextMessage(senderPsid, statsMsg, pageToken);
     return true;
   }
@@ -394,7 +414,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const query = input.replace(/^\/search\s*/i, '').trim();
     const results = await performFreeWebSearch(query);
-    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto para sa kasalukuyang taon (2026) batay sa live search data:\n\n${results || 'Walang nahanap na live data.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Oras ngayon: ${currentDateTimePH}. Sagutin nang may mataas na katumpakan batay sa search data:\n\n${results || 'Walang nahanap.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🌐 **Web Search Result:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -409,7 +429,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
   if (lowerText.startsWith('/math ')) {
     await sendTypingOn(senderPsid, pageToken);
     const mathProblem = input.replace(/^\/math\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Solve step-by-step: ${mathProblem}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Solve step-by-step with rigorous proof: ${mathProblem}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🧮 **Math Solution:**\n\n${reply}`, pageToken);
     return true;
   }
@@ -417,7 +437,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
   if (lowerText.startsWith('/code ')) {
     await sendTypingOn(senderPsid, pageToken);
     const codeQuery = input.replace(/^\/code\s*/i, '').trim();
-    const reply = await getDirectGeminiResponse(`Help with code: ${codeQuery}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Provide clean, modern, fully functional code: ${codeQuery}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `💻 **Code Solution:**\n\n${reply}`, pageToken);
     return true;
   }
@@ -439,7 +459,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Transcribe and respond to this audio using correct spelling and grammar:" },
+          { text: "Transcribe and respond accurately with perfect grammar and spelling:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
       }]
@@ -459,7 +479,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Summarize this document clearly with proper spelling and grammar:" },
+          { text: "Analyze and summarize this document thoroughly and clearly:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
       }]
@@ -473,7 +493,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read, verify and summarize this link clearly with proper spelling and grammar: ${url}` }] }]
+      contents: [{ parts: [{ text: `Extract, analyze, and summarize the key insights from this link clearly: ${url}` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -495,7 +515,7 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }]
+      contents: [{ parts: [{ text: `${promptText}. Siguraduhing 100% tama ang factual data, spelling, at grammar.` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (err) {
@@ -512,7 +532,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Analyze and explain what is shown in this image clearly with correct spelling:" },
+          { text: "Analyze this image in detail and provide clear, step-by-step academic explanations:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
       }]
@@ -523,7 +543,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, currentDatePH) {
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, currentDateTimePH) {
   try {
     const firstName = 'Boss';
     const lowerMsg = userMessage.toLowerCase();
@@ -547,13 +567,13 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, curr
     let history = userConversationsMap.get(senderPsid) || [];
     let messageToSend = userMessage;
 
-    // Automatic Search Trigger para sa 2026 realtime facts
+    // Real-Time Trigger para sa Balita, Weather, at Live Topics
     const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i.test(userMessage);
     if (isSearchQuery) {
       try {
         const searchData = await performFreeWebSearch(userMessage);
         if (searchData) {
-          messageToSend = `${userMessage}\n\n[Live 2026 Internet Search Data]:\n${searchData}`;
+          messageToSend = `${userMessage}\n\n[Live Real-Time Web Data]:\n${searchData}`;
         }
       } catch (err) {
         console.warn("Search fetch failed:", err.message);
@@ -566,27 +586,27 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken, curr
       history = history.slice(history.length - 10);
     }
 
-    let systemInstructionText = `You are a helpful, smart AI assistant chatting with ${firstName} on Facebook Messenger.
+    let systemInstructionText = `You are JepongDevxyz AI, a state-of-the-art, hyper-intelligent, and analytical AI assistant chatting with ${firstName} on Facebook Messenger.
 
-CURRENT TEMPORAL CONTEXT (CRITICAL):
+TEMPORAL GROUND TRUTH (CRITICAL):
+- Exact Philippine Date & Time: ${currentDateTimePH} (PST, UTC+8).
 - The current year is 2026.
-- Current Date: ${currentDatePH} (Philippine Standard Time).
-- Your knowledge cutoff is not restricted to 2023 or 2024. All responses must be aligned with 2026.
+- If the user asks for the current time, date, day, or year (halimbawa: "ano oras na ngayon sa Guimba?", "anong petsa ngayon?"), ALWAYS refer directly to this exact Philippine time. Never fabricate or extrapolate a different time.
 
 AI NAME & IDENTITY:
 - Official Name: JepongDevxyz (or JepongDevxyz AI).
-- Kapag tinanong ka kung sino ka o ano pangalan mo, dapat mong sabihing: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang pangalan.
+- Kapag tinanong ka kung sino ka o ano ang pangalan mo: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
 
-LANGUAGE, SEARCH & SPELLING RULES:
-- If [Live 2026 Internet Search Data] is provided in the prompt, ALWAYS base your answer on it to provide up-to-date, real-time facts.
-- Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (halimbawa: gamitin ang "maitutulong", HUWAG kailanman "maitalong").
-- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+LANGUAGE, REASONING & SPELLING:
+- If [Live Real-Time Web Data] is provided, prioritize it for accurate, up-to-date facts.
+- Always use correct spelling, proper grammar, and natural flow (e.g., use "maitutulong", never "maitalong").
+- Respond naturally and concisely in the exact language or dialect the user is using.
 
 CRITICAL RULE ABOUT YOUR CREATOR:
-- Kapag tinanong kung sino ang gumawa sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+- Kapag tinanong kung sino ang lumikha o nag-program sa iyo, laging sabihin na ikaw ay nilikha at binuo ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
 
     if (currentPersona) {
-      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu). If asked about your AI identity, state that you are JepongDevxyz.`;
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, creator credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu), and your core identity remains JepongDevxyz AI.`;
     }
 
     const payload = {
