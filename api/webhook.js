@@ -187,7 +187,7 @@ REASONING & WRITING STANDARDS:
 
     if (message && ['/reset', '/refresh', 'reset'].includes(message.toLowerCase().trim())) {
       webConversationsMap.delete(sessionKey);
-      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?' });
+      return res.status(200).json({ reply: '✓ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?' });
     }
 
     const userParts = [];
@@ -466,7 +466,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
-    return '❌ Error sa pagproseso ng boses.';
+    return '× Error sa pagproseso ng boses.';
   }
 }
 
@@ -486,7 +486,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
-    return '❌ Error sa pagbasa ng file.';
+    return '× Error sa pagbasa ng file.';
   }
 }
 
@@ -497,7 +497,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
-    return '❌ Hindi nabasa ang link.';
+    return '× Hindi nabasa ang link.';
   }
 }
 
