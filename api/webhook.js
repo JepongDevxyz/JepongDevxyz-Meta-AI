@@ -3,8 +3,7 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-flash-latest',
 ];
 
-// Naka-set sa opisyal at gumaganang bersyon ng Facebook Graph API
-const FB_GRAPH_VERSION = 'v22.0';
+const FB_GRAPH_VERSION = 'v26.0';
 
 let currentKeyIndex = 0;
 
@@ -19,7 +18,7 @@ const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
 const webConversationsMap = new Map();
-const userNamesCache = new Map(); // Cache para hindi paulit-ulit na tumawag sa Graph API
+const userNamesCache = new Map();
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -33,7 +32,11 @@ export default async function handler(req, res) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
 
-    const systemInstructionText = `You are a helpful AI assistant chatting with Boss on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    const systemInstructionText = `You are a helpful, smart AI assistant chatting with Boss on a Web UI. 
+
+LANGUAGE & SPELLING RULES:
+- Always use correct spelling, proper grammar, and natural phrasing. Never make typos or invent misspelled words (e.g., write "maitutulong", never "maitalong").
+- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
 - Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
@@ -201,9 +204,6 @@ CRITICAL RULE ABOUT YOUR CREATOR:
   return res.status(405).send('Method Not Allowed');
 }
 
-/**
- * Rotational API Call Engine
- */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
 
@@ -303,7 +303,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Transcribe and respond to this audio in Tagalog/English:" },
+          { text: "Transcribe and respond to this audio using correct spelling and grammar:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
       }]
@@ -323,7 +323,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Summarize this document clearly:" },
+          { text: "Summarize this document clearly with proper spelling and grammar:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
       }]
@@ -337,7 +337,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
+      contents: [{ parts: [{ text: `Read and summarize this link clearly with proper spelling and grammar: ${url}` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (e) {
@@ -359,7 +359,7 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: promptText }] }]
+      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (err) {
@@ -376,7 +376,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Analyze and explain what is shown in this image:" },
+          { text: "Analyze and explain what is shown in this image clearly with correct spelling:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
       }]
@@ -387,16 +387,12 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-/**
- * Enhanced Facebook User Name Getter
- */
 async function getFacebookUserName(senderPsid, pageToken) {
   if (userNamesCache.has(senderPsid)) {
     return userNamesCache.get(senderPsid);
   }
 
   try {
-    // Humihingi ng first_name at buong name bilang backup
     const response = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/${senderPsid}?fields=first_name,name&access_token=${pageToken}`);
     const data = await response.json();
 
@@ -411,8 +407,6 @@ async function getFacebookUserName(senderPsid, pageToken) {
         userNamesCache.set(senderPsid, firstName);
         return firstName;
       }
-    } else if (data && data.error) {
-      console.warn(`[Graph API Name Fetch Error]`, data.error.message);
     }
   } catch (err) {
     console.error("Error fetching Facebook name:", err);
@@ -429,7 +423,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
       userPersonasMap.delete(senderPsid);
       userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
+      await sendTextMessage(senderPsid, `✓ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
       await sendTypingOff(senderPsid, pageToken);
       return;
     }
@@ -449,7 +443,11 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       history = history.slice(history.length - 10);
     }
 
-    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. 
+
+LANGUAGE & SPELLING RULES:
+- Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (e.g., use "maitutulong", never "maitalong").
+- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
 - Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
