@@ -1,6 +1,6 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-flash-latest',
   'gemini-flash-lite-latest',
+  'gemini-flash-latest',
 ];
 
 const FB_GRAPH_VERSION = 'v26.0';
