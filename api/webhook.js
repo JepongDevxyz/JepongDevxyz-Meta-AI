@@ -5,14 +5,14 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash'
 ];
 
-// Naka-set sa opisyal at stable na bersyon ng Meta Graph API
-const FB_GRAPH_VERSION = 'v22.0';
+const FB_GRAPH_VERSION = 'v26.0';
 
 let currentKeyIndex = 0;
 
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const key = keysList[currentKeyIndex % keysList.length];
+  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
   return key;
 }
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
-  // 🌐 WEB CHAT ENDPOINT
+  // 🌐 WEB CHAT ENDPOINT (Tugma sa bagong index.html na may multiple files/camera/voice/memory)
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
@@ -50,6 +50,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     const userParts = [];
 
+    // Suporta sa kahit ilang nakalakip na files/photos/audio
     if (Array.isArray(attachments) && attachments.length > 0) {
       for (const item of attachments) {
         if (item.base64 && item.mimeType) {
@@ -462,41 +463,27 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
-  try {
-    await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
-    });
-  } catch (e) {
-    console.error("Typing On Error:", e);
-  }
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
+  });
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  try {
-    await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
-    });
-  } catch (e) {
-    console.error("Typing Off Error:", e);
-  }
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
+  });
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
-    });
-    const data = await res.json();
-    if (!res.ok) console.error("Send Media Attachment Error:", data);
-  } catch (e) {
-    console.error("Media Attachment Fetch Error:", e);
-  }
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
+  });
 }
 
 async function sendLongTextMessage(senderPsid, responseText, pageToken) {
@@ -512,17 +499,9 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  try {
-    const res = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      console.error("Send Text Error from Meta:", data);
-    }
-  } catch (e) {
-    console.error("Fetch Network Error on sendTextMessage:", e);
-  }
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
+  });
 }
