@@ -7,6 +7,20 @@ const FB_GRAPH_VERSION = 'v26.0';
 
 let currentKeyIndex = 0;
 
+/**
+ * Nagbabalik ng mga nalinis na API keys mula sa env variables
+ */
+function getApiKeysList() {
+  const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+  return rawKeys
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Rotational API Key Selector
+ */
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const key = keysList[currentKeyIndex % keysList.length];
@@ -23,8 +37,7 @@ export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
   const ADMIN_PSID = process.env.ADMIN_PSID;
-  const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
-  const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+  const apiKeys = getApiKeysList();
 
   // 🌐 WEB CHAT ENDPOINT
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
@@ -85,7 +98,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
       const payload = {
         system_instruction: { parts: [{ text: systemInstructionText }] },
         contents: history,
-        tools: [{ google_search: {} }]
+        tools: [{ googleSearch: {} }]
       };
 
       const reply = await callGeminiApiWithFallback(payload, apiKeys, 15000);
@@ -208,6 +221,9 @@ CRITICAL RULE ABOUT YOUR CREATOR:
   return res.status(405).send('Method Not Allowed');
 }
 
+/**
+ * Rotational API Call Engine na may Google Search at Fallback
+ */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
 
@@ -246,7 +262,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
         }
       }
 
-      console.warn(`[Key Switch] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
+      console.warn(`[Key Rotate Attempt ${attempt + 1}] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
       lastError = new Error(data.error?.message || `API Status ${response.status}`);
     } catch (err) {
       clearTimeout(timer);
@@ -257,7 +273,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  throw lastError || new Error('Abala ang lahat ng API keys.');
+  throw lastError || new Error('Abala o ubos na ang lahat ng available na API keys.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -315,7 +331,8 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
           { text: "Transcribe and respond to this audio using correct spelling and grammar:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -335,7 +352,8 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
           { text: "Summarize this document clearly with proper spelling and grammar:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -346,8 +364,8 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read and summarize this link clearly with proper spelling and grammar: ${url}` }] }],
-      tools: [{ google_search: {} }]
+      contents: [{ parts: [{ text: `Read, verify and summarize this link clearly with proper spelling and grammar: ${url}` }] }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -370,7 +388,7 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
       contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }],
-      tools: [{ google_search: {} }]
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (err) {
@@ -390,7 +408,8 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
           { text: "Analyze and explain what is shown in this image clearly with correct spelling:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -430,7 +449,7 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
 
 AI NAME & IDENTITY:
 - AI Name: JepongDevxyz AI
-- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing tulad ng "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI". Never say you don't have an official name.
+- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing like "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI". Never say you don't have an official name.
 
 LANGUAGE, SEARCH & SPELLING RULES:
 - Use your Google Search tool whenever needed to provide accurate, real-time, and updated information on any query (news, weather, latest events, live facts, etc.).
@@ -449,7 +468,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
     const payload = {
       system_instruction: { parts: [{ text: systemInstructionText }] },
       contents: history,
-      tools: [{ google_search: {} }]
+      tools: [{ googleSearch: {} }]
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
