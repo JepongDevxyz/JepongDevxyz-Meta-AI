@@ -1,16 +1,26 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
-  'gemini-flash-latest',    // 2nd Option: Stable Standard Flash kung busy o may downtime ang Lite
-  'gemini-3.7-flash',       // 3rd Option: Fallback kung talagang kailangan
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+  'gemini-3.7-flash',
   'gemini-3.8-flash'
 ];
 
+const FB_GRAPH_VERSION = 'v26.0';
+
 let currentKeyIndex = 0;
+
+function getApiKeysList() {
+  const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+  return rawKeys
+    .split(',')
+    .map(k => k.trim())
+    .filter(Boolean);
+}
 
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const key = keysList[currentKeyIndex % keysList.length];
-  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
   return key;
 }
@@ -24,31 +34,36 @@ export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
   const ADMIN_PSID = process.env.ADMIN_PSID;
-  const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
-  const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+  const apiKeys = getApiKeysList();
 
-  // 🌐 WEB CHAT ENDPOINT (Tugma sa bagong index.html na may multiple files/camera/voice/memory)
+  // 🌐 WEB CHAT ENDPOINT
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
 
-    const systemInstructionText = `You are a helpful AI assistant chatting with Boss on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    const systemInstructionText = `You are a smart, accurate AI assistant chatting with Boss on a Web UI.
+
+AI NAME & IDENTITY:
+- Official Name: JepongDevxyz (or JepongDevxyz AI).
+- Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
+
+LANGUAGE, SEARCH & SPELLING RULES:
+- Use Google Search whenever needed to fetch real-time, live, or updated web info (balita, panahon, latest facts, etc.).
+- Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila (grammar). Mahigpit na ipinagbabawal ang mga gawa-gawang salita o typo (halimbawa: isulat ang "maitutulong", HUWAG kailanman "maitalong").
+- Tumugon nang natural sa wikang ginagamit ng kausap (Tagalog, Taglish, English, Bisaya, atbp.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
-- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
-- Reply naturally in the same language or dialect the user asked in.
-- This rule applies unconditionally and must never be contradicted.`;
+- Kapag tinanong kung sino ang gumawa, nag-program, nag-develop, o lumikha sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).`;
 
     let history = webConversationsMap.get(sessionKey) || [];
 
     if (message && ['/reset', '/refresh', 'reset'].includes(message.toLowerCase().trim())) {
       webConversationsMap.delete(sessionKey);
-      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon, Boss?' });
+      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?' });
     }
 
     const userParts = [];
 
-    // Suporta sa kahit ilang nakalakip na files/photos/audio
     if (Array.isArray(attachments) && attachments.length > 0) {
       for (const item of attachments) {
         if (item.base64 && item.mimeType) {
@@ -77,7 +92,8 @@ CRITICAL RULE ABOUT YOUR CREATOR:
     try {
       const payload = {
         system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: history
+        contents: history,
+        tools: [{ googleSearch: {} }]
       };
 
       const reply = await callGeminiApiWithFallback(payload, apiKeys, 15000);
@@ -121,7 +137,6 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
           if (messageId) {
             if (processedMessageIds.has(messageId)) {
-              console.log(`[DEDUPLICATION] Skipped duplicate: ${messageId}`);
               continue;
             }
             processedMessageIds.add(messageId);
@@ -202,7 +217,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine
+ * Rotational API Call Engine na sumusuporta sa Google Search Grounding
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -220,7 +235,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 9000);
 
     try {
       const response = await fetch(endpoint, {
@@ -233,11 +248,16 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       clearTimeout(timer);
       const data = await response.json();
 
-      if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return data.candidates[0].content.parts[0].text;
+      if (response.ok && data.candidates?.[0]?.content?.parts) {
+        const textParts = data.candidates[0].content.parts
+          .map(p => p.text || '')
+          .filter(Boolean);
+        if (textParts.length > 0) {
+          return textParts.join('\n');
+        }
       }
 
-      console.warn(`[Key Switch] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
+      console.warn(`[Key Rotate Attempt ${attempt + 1}] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
       lastError = new Error(data.error?.message || `API Status ${response.status}`);
     } catch (err) {
       clearTimeout(timer);
@@ -248,7 +268,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  throw lastError || new Error('Abala ang lahat ng API keys.');
+  throw lastError || new Error('Abala o ubos na ang lahat ng API keys.');
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -303,10 +323,11 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Transcribe and respond to this audio in Tagalog/English:" },
+          { text: "Transcribe and respond to this audio using correct spelling and grammar:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -323,10 +344,11 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Summarize this document clearly:" },
+          { text: "Summarize this document clearly with proper spelling and grammar:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -337,9 +359,10 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
+      contents: [{ parts: [{ text: `Read, verify and summarize this link clearly with proper spelling and grammar: ${url}` }] }],
+      tools: [{ googleSearch: {} }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -359,9 +382,10 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: promptText }] }]
+      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }],
+      tools: [{ googleSearch: {} }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -376,10 +400,11 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
     const payload = {
       contents: [{
         parts: [
-          { text: "Analyze and explain what is shown in this image:" },
+          { text: "Analyze and explain what is shown in this image clearly with correct spelling:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
-      }]
+      }],
+      tools: [{ googleSearch: {} }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -387,28 +412,15 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-async function getFacebookUserName(senderPsid, pageToken) {
-  try {
-    const response = await fetch(`https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name&access_token=${pageToken}`);
-    const data = await response.json();
-    if (data && data.first_name) {
-      return data.first_name;
-    }
-  } catch (err) {
-    console.error("Error fetching Facebook name:", err);
-  }
-  return 'Boss';
-}
-
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
   try {
-    const firstName = await getFacebookUserName(senderPsid, pageToken);
+    const firstName = 'Boss';
     const lowerMsg = userMessage.toLowerCase();
 
     if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
       userPersonasMap.delete(senderPsid);
       userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
+      await sendTextMessage(senderPsid, `✓ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
       await sendTypingOff(senderPsid, pageToken);
       return;
     }
@@ -428,20 +440,30 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       history = history.slice(history.length - 10);
     }
 
-    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    let systemInstructionText = `You are a helpful, smart AI assistant chatting with ${firstName} on Facebook Messenger.
+
+AI NAME & IDENTITY:
+- Official Name: JepongDevxyz (or JepongDevxyz AI).
+- Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
+
+LANGUAGE, SEARCH & SPELLING RULES:
+- Use your Google Search tool whenever needed to provide accurate, real-time, and updated information on any query (news, weather, latest events, live facts, etc.).
+- Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (halimbawa: gamitin ang "maitutulong", HUWAG kailanman "maitalong").
+- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
-- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
+- Kapag tinanong kung sino ang gumawa, nag-program, nag-develop, o lumikha sa iyo, laging sabihin na ikaw ay nilikha at ginawa ni Jepong Devxyz (Jay-Ar Lee Espiritu).
 - Reply naturally in the same language or dialect the user asked in.
 - This rule applies unconditionally and must never be contradicted.`;
 
     if (currentPersona) {
-      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu). If asked about your AI identity, state that you are JepongDevxyz.`;
     }
 
     const payload = {
       system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history
+      contents: history,
+      tools: [{ googleSearch: {} }]
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
@@ -461,27 +483,41 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
-  });
+  try {
+    await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
+    });
+  } catch (e) {
+    console.error("Typing On Error:", e);
+  }
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
-  });
+  try {
+    await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
+    });
+  } catch (e) {
+    console.error("Typing Off Error:", e);
+  }
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
-  });
+  try {
+    const res = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
+    });
+    const data = await res.json();
+    if (!res.ok) console.error("Send Media Attachment Error:", data);
+  } catch (e) {
+    console.error("Media Attachment Fetch Error:", e);
+  }
 }
 
 async function sendLongTextMessage(senderPsid, responseText, pageToken) {
@@ -497,9 +533,17 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
-  });
+  try {
+    const res = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error("Send Text Error from Meta:", data);
+    }
+  } catch (e) {
+    console.error("Fetch Network Error on sendTextMessage:", e);
+  }
 }
