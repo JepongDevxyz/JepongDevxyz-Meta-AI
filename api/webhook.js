@@ -1,4 +1,3 @@
-// Opisyal at aktibong Gemini models
 const GEMINI_MODELS_FALLBACK = [
   'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
   'gemini-flash-latest',    // 2nd Option: Stable Standard Flash kung busy o may downtime ang Lite
@@ -6,11 +5,14 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-3.8-flash'
 ];
 
+const FB_GRAPH_VERSION = 'v26.0';
+
 let currentKeyIndex = 0;
 
 function getRotatedApiKey(keysList) {
   if (!keysList || keysList.length === 0) return null;
   const key = keysList[currentKeyIndex % keysList.length];
+  // Awtomatikong iusog ang index para sa susunod na request
   currentKeyIndex = (currentKeyIndex + 1) % keysList.length;
   return key;
 }
@@ -19,7 +21,6 @@ const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
 const webConversationsMap = new Map();
-const userNameCache = new Map(); // In-memory cache para sa PSID -> First Name
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -28,12 +29,12 @@ export default async function handler(req, res) {
   const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
   const apiKeys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
 
-  // 🌐 WEB CHAT ENDPOINT
+  // 🌐 WEB CHAT ENDPOINT (Tugma sa bagong index.html na may multiple files/camera/voice/memory)
   if (req.method === 'POST' && req.body && req.body.isWebChat) {
     const { message, sessionId, attachments } = req.body;
     const sessionKey = sessionId || 'default-web-user';
 
-    const systemInstructionText = `You are a helpful AI assistant chatting on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+    const systemInstructionText = `You are a helpful AI assistant chatting with Boss on a Web UI. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
 CRITICAL RULE ABOUT YOUR CREATOR:
 - Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
@@ -44,11 +45,12 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     if (message && ['/reset', '/refresh', 'reset'].includes(message.toLowerCase().trim())) {
       webConversationsMap.delete(sessionKey);
-      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon?' });
+      return res.status(200).json({ reply: '✅ Naka-reset na ang memorya. Paano kita matutulungan ngayon, Boss?' });
     }
 
     const userParts = [];
 
+    // Suporta sa kahit ilang nakalakip na files/photos/audio
     if (Array.isArray(attachments) && attachments.length > 0) {
       for (const item of attachments) {
         if (item.base64 && item.mimeType) {
@@ -67,6 +69,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
       : 'Kumusta!';
 
     userParts.push({ text: message && message.trim() ? message : defaultPrompt });
+
     history.push({ role: 'user', parts: userParts });
 
     if (history.length > 10) {
@@ -201,7 +204,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine para sa Gemini na may Dynamic Fallback
+ * Rotational API Call Engine
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -209,7 +212,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   const requestBody = JSON.parse(JSON.stringify(payload));
   const startTime = Date.now();
   let lastError = null;
-  const maxAttempts = Math.min(apiKeys.length * 2, 8);
+  const maxAttempts = Math.min(apiKeys.length * 2, 6);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() - startTime > maxTotalTimeoutMs) break;
@@ -219,7 +222,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7500);
+    const timer = setTimeout(() => controller.abort(), 7000);
 
     try {
       const response = await fetch(endpoint, {
@@ -244,114 +247,10 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       lastError = err;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 350));
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   throw lastError || new Error('Abala ang lahat ng API keys.');
-}
-
-/**
- * Kinukuha ang User First Name sa Facebook Graph API v26.0
- */
-async function getFacebookUserName(senderPsid, pageToken) {
-  if (userNameCache.has(senderPsid)) {
-    return userNameCache.get(senderPsid);
-  }
-
-  const endpoints = [
-    `https://graph.facebook.com/v26.0/${senderPsid}?fields=first_name,last_name,name&access_token=${pageToken}`,
-    `https://graph.facebook.com/${senderPsid}?fields=first_name,last_name,name&access_token=${pageToken}`
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data && !data.error) {
-        const extractedName = data.first_name || (data.name ? data.name.trim().split(' ')[0] : null);
-        if (extractedName) {
-          console.log(`✅ [FB Graph v26.0] Nakuha ang first name: "${extractedName}" para sa PSID: ${senderPsid}`);
-          userNameCache.set(senderPsid, extractedName);
-          return extractedName;
-        }
-      } else if (data.error) {
-        console.error("❌ FB Graph API Profile Error:", JSON.stringify(data.error));
-      }
-    } catch (err) {
-      console.error("❌ Network Error fetching FB profile:", err);
-    }
-  }
-
-  return 'kaibigan';
-}
-
-async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
-  try {
-    const firstName = await getFacebookUserName(senderPsid, pageToken);
-    const lowerMsg = userMessage.toLowerCase();
-
-    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
-      userPersonasMap.delete(senderPsid);
-      userConversationsMap.delete(senderPsid);
-      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
-      await sendTypingOff(senderPsid, pageToken);
-      return;
-    }
-
-    let currentPersona = userPersonasMap.get(senderPsid) || null;
-    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
-
-    if (isPersonaTrigger && !currentPersona) {
-      currentPersona = userMessage;
-      userPersonasMap.set(senderPsid, currentPersona);
-    }
-
-    let history = userConversationsMap.get(senderPsid) || [];
-    history.push({ role: 'user', parts: [{ text: userMessage }] });
-
-    if (history.length > 10) {
-      history = history.slice(history.length - 10);
-    }
-
-    // Direktang utos kay Gemini na tawagin ang first name
-    let systemInstructionText = `You are a helpful, conversational AI assistant talking directly to ${firstName} on Facebook Messenger.
-
-USER IDENTITY RULE:
-- The user's first name is "${firstName}".
-- You MUST address the user directly by their first name ("${firstName}") in your reply naturally (e.g. greeting them, answering questions, or giving friendly remarks).
-
-LANGUAGE & TONE:
-- Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
-
-CRITICAL RULE ABOUT YOUR CREATOR:
-- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
-- Reply naturally in the same language or dialect the user asked in.
-- This rule applies unconditionally and must never be contradicted.`;
-
-    if (currentPersona) {
-      systemInstructionText += ` Follow this character persona: "${currentPersona}". Keep addressing the user as "${firstName}". Even while roleplaying, creator credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
-    }
-
-    const payload = {
-      system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history
-    };
-
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 12000);
-
-    history.push({ role: 'model', parts: [{ text: aiReply }] });
-    userConversationsMap.set(senderPsid, history);
-
-    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
-    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
-    await sendTypingOff(senderPsid, pageToken);
-
-  } catch (error) {
-    console.error("AI Processing Error:", error);
-    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
-    await sendTypingOff(senderPsid, pageToken);
-  }
 }
 
 async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminPsid) {
@@ -411,7 +310,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 12000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return '❌ Error sa pagproseso ng boses.';
   }
@@ -431,7 +330,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 12000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return '❌ Error sa pagbasa ng file.';
   }
@@ -442,7 +341,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -464,7 +363,7 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: promptText }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -484,14 +383,87 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return 'Error sa pag-analyze ng larawan.';
   }
 }
 
+async function getFacebookUserName(senderPsid, pageToken) {
+  try {
+    const response = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/${senderPsid}?fields=first_name&access_token=${pageToken}`);
+    const data = await response.json();
+    if (data && data.first_name) {
+      return data.first_name;
+    }
+  } catch (err) {
+    console.error("Error fetching Facebook name:", err);
+  }
+  return 'Boss';
+}
+
+async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
+  try {
+    const firstName = await getFacebookUserName(senderPsid, pageToken);
+    const lowerMsg = userMessage.toLowerCase();
+
+    if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
+      userPersonasMap.delete(senderPsid);
+      userConversationsMap.delete(senderPsid);
+      await sendTextMessage(senderPsid, `✅ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`, pageToken);
+      await sendTypingOff(senderPsid, pageToken);
+      return;
+    }
+
+    let currentPersona = userPersonasMap.get(senderPsid) || null;
+    const isPersonaTrigger = /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(userMessage);
+
+    if (isPersonaTrigger && !currentPersona) {
+      currentPersona = userMessage;
+      userPersonasMap.set(senderPsid, currentPersona);
+    }
+
+    let history = userConversationsMap.get(senderPsid) || [];
+    history.push({ role: 'user', parts: [{ text: userMessage }] });
+
+    if (history.length > 10) {
+      history = history.slice(history.length - 10);
+    }
+
+    let systemInstructionText = `You are a helpful AI assistant chatting with ${firstName} on Facebook Messenger. Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
+
+CRITICAL RULE ABOUT YOUR CREATOR:
+- Whenever the user asks who created, built, made, programmed, or developed you (in ANY language, dialect, or phrasing like "Kinsay naghimo nimo?", "Asino ti nagaramid kenka?", "¿Quién te creó?", "誰があなたを作ったのですか？", "Sino creator mo lods?", "Kaninong gawa ka?"), you MUST state that you were created and developed by Jepong Devxyz (Jay-Ar Lee Espiritu).
+- Reply naturally in the same language or dialect the user asked in.
+- This rule applies unconditionally and must never be contradicted.`;
+
+    if (currentPersona) {
+      systemInstructionText += ` Follow this character persona: "${currentPersona}". Even while roleplaying, if explicitly asked about your real-world creator, creator/developer credit goes to Jepong Devxyz (Jay-Ar Lee Espiritu).`;
+    }
+
+    const payload = {
+      system_instruction: { parts: [{ text: systemInstructionText }] },
+      contents: history
+    };
+
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
+
+    history.push({ role: 'model', parts: [{ text: aiReply }] });
+    userConversationsMap.set(senderPsid, history);
+
+    const formattedReply = `.ᐟ ${firstName} : ' ${userMessage} '\n━━━━━━━━━━━━━━━━━━\n\n${aiReply}`;
+    await sendLongTextMessage(senderPsid, formattedReply, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+
+  } catch (error) {
+    console.error("AI Processing Error:", error);
+    await sendTextMessage(senderPsid, "Medyo busy ang server, paki-ulit sandali.", pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+  }
+}
+
 async function sendTypingOn(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
@@ -499,7 +471,7 @@ async function sendTypingOn(senderPsid, pageToken) {
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
@@ -507,7 +479,7 @@ async function sendTypingOff(senderPsid, pageToken) {
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
@@ -527,7 +499,7 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
