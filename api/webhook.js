@@ -25,6 +25,47 @@ function getRotatedApiKey(keysList) {
   return key;
 }
 
+/**
+ * 🌐 100% LIBRENG INTERNET SEARCH ENGINE (DuckDuckGo Lite/API)
+ */
+async function performFreeWebSearch(query) {
+  try {
+    const cleanQuery = query.replace(/^(search|mag-search|hanapin|ano ang balita sa|updates sa)\s+/i, '').trim();
+    const endpoint = `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`;
+    
+    const res = await fetch(endpoint, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    let snippets = [];
+    if (data.AbstractText) snippets.push(data.AbstractText);
+    if (Array.isArray(data.RelatedTopics)) {
+      for (const topic of data.RelatedTopics.slice(0, 3)) {
+        if (topic.Text) snippets.push(topic.Text);
+      }
+    }
+
+    if (snippets.length > 0) {
+      return snippets.join('\n\n');
+    }
+
+    // Fallback: DDG HTML Search kung walang abstract
+    const htmlRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const html = await htmlRes.text();
+    const matches = [...html.matchAll(/<a class="result__snippet[^>]*>(.*?)<\/a>/g)]
+      .map(m => m[1].replace(/<[^>]+>/g, '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    return matches.length > 0 ? matches.join('\n\n') : null;
+  } catch (e) {
+    console.error("Free Search Error:", e.message);
+    return null;
+  }
+}
+
 const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
@@ -47,8 +88,7 @@ AI NAME & IDENTITY:
 - Official Name: JepongDevxyz (or JepongDevxyz AI).
 - Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
 
-LANGUAGE, SEARCH & SPELLING RULES:
-- Use Google Search whenever needed to fetch real-time, live, or updated web info (balita, panahon, latest facts, etc.).
+LANGUAGE & SPELLING RULES:
 - Gumamit ng 100% wastong baybay (correct spelling) at tamang balarila (grammar). Mahigpit na ipinagbabawal ang mga gawa-gawang salita o typo (halimbawa: isulat ang "maitutulong", HUWAG kailanman "maitalong").
 - Tumugon nang natural sa wikang ginagamit ng kausap (Tagalog, Taglish, English, Bisaya, atbp.).
 
@@ -77,12 +117,17 @@ CRITICAL RULE ABOUT YOUR CREATOR:
       }
     }
 
-    const defaultPrompt = (Array.isArray(attachments) && attachments.length > 0)
-      ? 'Suriin at ipaliwanag nang maayos ang mga nakalakip na file o larawang ito:'
-      : 'Kumusta!';
+    let finalPrompt = message && message.trim() ? message : 'Kumusta!';
 
-    userParts.push({ text: message && message.trim() ? message : defaultPrompt });
+    // Libreng auto web-search check
+    if (/(balita|sino si|ano ang|kailan|update|presyo|weather|search|score)/i.test(finalPrompt)) {
+      const searchResults = await performFreeWebSearch(finalPrompt);
+      if (searchResults) {
+        finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
+      }
+    }
 
+    userParts.push({ text: finalPrompt });
     history.push({ role: 'user', parts: userParts });
 
     if (history.length > 10) {
@@ -92,8 +137,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
     try {
       const payload = {
         system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: history,
-        tools: [{ googleSearch: {} }]
+        contents: history
       };
 
       const reply = await callGeminiApiWithFallback(payload, apiKeys, 15000);
@@ -136,9 +180,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
           if (!senderPsid) continue;
 
           if (messageId) {
-            if (processedMessageIds.has(messageId)) {
-              continue;
-            }
+            if (processedMessageIds.has(messageId)) continue;
             processedMessageIds.add(messageId);
             setTimeout(() => processedMessageIds.delete(messageId), 300000);
           }
@@ -217,7 +259,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine na sumusuporta sa Google Search Grounding
+ * Rotational API Call Engine
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -248,13 +290,8 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       clearTimeout(timer);
       const data = await response.json();
 
-      if (response.ok && data.candidates?.[0]?.content?.parts) {
-        const textParts = data.candidates[0].content.parts
-          .map(p => p.text || '')
-          .filter(Boolean);
-        if (textParts.length > 0) {
-          return textParts.join('\n');
-        }
+      if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        return data.candidates[0].content.parts[0].text;
       }
 
       console.warn(`[Key Rotate Attempt ${attempt + 1}] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
@@ -284,6 +321,16 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     return true;
   }
 
+  if (lowerText.startsWith('/search ')) {
+    await sendTypingOn(senderPsid, pageToken);
+    const query = input.replace(/^\/search\s*/i, '').trim();
+    const results = await performFreeWebSearch(query);
+    const reply = await getDirectGeminiResponse(`Sagutin ito batay sa impormasyong ito:\n\n${results || 'Walang nahanap.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
+    await sendLongTextMessage(senderPsid, `🌐 **Web Search Result:**\n\n${reply}`, pageToken);
+    await sendTypingOff(senderPsid, pageToken);
+    return true;
+  }
+
   if (lowerText.startsWith('/imagen ')) {
     const prompt = input.replace(/^\/imagen\s*/i, '').trim();
     if (prompt) await generateAndSendImage(senderPsid, prompt, pageToken);
@@ -307,7 +354,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
   }
 
   if (['/commands', '/help'].includes(lowerText)) {
-    const helpMsg = "📚 AI Help Menu\n\n🎨 `/imagen [prompt]`\n🎓 `/math [prob]`, `/code [task]`\n🔄 `/reset` o `/refresh` (Ibalik sa normal mode)";
+    const helpMsg = "📚 AI Help Menu\n\n🔍 `/search [topic]` (Live Web Search)\n🎨 `/imagen [prompt]`\n🎓 `/math [prob]`, `/code [task]`\n🔄 `/reset` o `/refresh` (Ibalik sa normal mode)";
     await sendTextMessage(senderPsid, helpMsg, pageToken);
     return true;
   }
@@ -326,8 +373,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
           { text: "Transcribe and respond to this audio using correct spelling and grammar:" },
           { inline_data: { mime_type: "audio/mp3", data: base64Data } }
         ]
-      }],
-      tools: [{ googleSearch: {} }]
+      }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -347,8 +393,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
           { text: "Summarize this document clearly with proper spelling and grammar:" },
           { inline_data: { mime_type: "application/pdf", data: base64Data } }
         ]
-      }],
-      tools: [{ googleSearch: {} }]
+      }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
@@ -359,8 +404,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read, verify and summarize this link clearly with proper spelling and grammar: ${url}` }] }],
-      tools: [{ googleSearch: {} }]
+      contents: [{ parts: [{ text: `Read, verify and summarize this link clearly with proper spelling and grammar: ${url}` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -382,8 +426,7 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }],
-      tools: [{ googleSearch: {} }]
+      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (err) {
@@ -403,8 +446,7 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
           { text: "Analyze and explain what is shown in this image clearly with correct spelling:" },
           { inline_data: { mime_type: "image/jpeg", data: base64Data } }
         ]
-      }],
-      tools: [{ googleSearch: {} }]
+      }]
     };
     return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
@@ -434,7 +476,18 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     }
 
     let history = userConversationsMap.get(senderPsid) || [];
-    history.push({ role: 'user', parts: [{ text: userMessage }] });
+    let messageToSend = userMessage;
+
+    // Libreng auto web-search trigger kapag may tanong na nangangailangan ng latest/live data
+    const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates sa|search|presyo|petsa|panahon|weather/i.test(userMessage);
+    if (isSearchQuery) {
+      const searchData = await performFreeWebSearch(userMessage);
+      if (searchData) {
+        messageToSend = `${userMessage}\n\n[Live Internet Search Data]:\n${searchData}`;
+      }
+    }
+
+    history.push({ role: 'user', parts: [{ text: messageToSend }] });
 
     if (history.length > 10) {
       history = history.slice(history.length - 10);
@@ -447,7 +500,7 @@ AI NAME & IDENTITY:
 - Kapag tinanong ka kung sino ka, kung may pangalan ka, o ano ang pangalan mo (halimbawa: "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), dapat mong sabihing malinaw: "Ako ay si JepongDevxyz" (o "JepongDevxyz AI"). Huwag na huwag mong sasabihing wala kang opisyal na pangalan.
 
 LANGUAGE, SEARCH & SPELLING RULES:
-- Use your Google Search tool whenever needed to provide accurate, real-time, and updated information on any query (news, weather, latest events, live facts, etc.).
+- If Live Internet Search Data is provided in the prompt, use it accurately to provide up-to-date facts.
 - Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (halimbawa: gamitin ang "maitutulong", HUWAG kailanman "maitalong").
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
@@ -462,12 +515,13 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     const payload = {
       system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history,
-      tools: [{ googleSearch: {} }]
+      contents: history
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
 
+    // I-save ang orihinal na tanong sa memory para malinis ang history
+    history[history.length - 1] = { role: 'user', parts: [{ text: userMessage }] };
     history.push({ role: 'model', parts: [{ text: aiReply }] });
     userConversationsMap.set(senderPsid, history);
 
