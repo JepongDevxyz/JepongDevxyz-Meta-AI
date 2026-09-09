@@ -1,7 +1,6 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.5-flash-lite',  // 1st PRIORITY: Pinakamababa ang token usage, hindi mabilis ma-rate limit
-  'gemini-3.6-flash',
-  'gemini-flash-lite-latest'
+  'gemini-flash-lite-latest',  
+  'gemini-flash-latest',
 ];
 
 // Naka-set sa opisyal at gumaganang bersyon ng Facebook Graph API
