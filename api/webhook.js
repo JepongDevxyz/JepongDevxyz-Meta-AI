@@ -201,7 +201,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 }
 
 /**
- * Rotational API Call Engine para sa Gemini
+ * Rotational API Call Engine para sa Gemini na may Dynamic Fallback
  */
 async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 15000) {
   if (!apiKeys || apiKeys.length === 0) throw new Error('Walang API Key na nakita sa environment variables.');
@@ -209,7 +209,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
   const requestBody = JSON.parse(JSON.stringify(payload));
   const startTime = Date.now();
   let lastError = null;
-  const maxAttempts = Math.min(apiKeys.length * 2, 6);
+  const maxAttempts = Math.min(apiKeys.length * 2, 8);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (Date.now() - startTime > maxTotalTimeoutMs) break;
@@ -219,7 +219,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 7500);
 
     try {
       const response = await fetch(endpoint, {
@@ -244,40 +244,46 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       lastError = err;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 350));
   }
 
   throw lastError || new Error('Abala ang lahat ng API keys.');
 }
 
 /**
- * Kinukuha ang User First Name sa Facebook Graph API
+ * Kinukuha ang User First Name sa Facebook Graph API v26.0
  */
 async function getFacebookUserName(senderPsid, pageToken) {
   if (userNameCache.has(senderPsid)) {
     return userNameCache.get(senderPsid);
   }
 
-  try {
-    const url = `https://graph.facebook.com/v19.0/${senderPsid}?fields=first_name,name&access_token=${pageToken}`;
-    const response = await fetch(url);
-    const data = await response.json();
+  const endpoints = [
+    `https://graph.facebook.com/v26.0/${senderPsid}?fields=first_name,last_name,name&access_token=${pageToken}`,
+    `https://graph.facebook.com/${senderPsid}?fields=first_name,last_name,name&access_token=${pageToken}`
+  ];
 
-    if (data.error) {
-      console.error("❌ FB Graph API Profile Error:", JSON.stringify(data.error));
-    } else {
-      const extractedName = data.first_name || (data.name ? data.name.trim().split(' ')[0] : null);
-      if (extractedName) {
-        console.log(`✅ [FB Graph] Nakuha ang first name: "${extractedName}" para sa PSID: ${senderPsid}`);
-        userNameCache.set(senderPsid, extractedName);
-        return extractedName;
+  for (const url of endpoints) {
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data && !data.error) {
+        const extractedName = data.first_name || (data.name ? data.name.trim().split(' ')[0] : null);
+        if (extractedName) {
+          console.log(`✅ [FB Graph v26.0] Nakuha ang first name: "${extractedName}" para sa PSID: ${senderPsid}`);
+          userNameCache.set(senderPsid, extractedName);
+          return extractedName;
+        }
+      } else if (data.error) {
+        console.error("❌ FB Graph API Profile Error:", JSON.stringify(data.error));
       }
+    } catch (err) {
+      console.error("❌ Network Error fetching FB profile:", err);
     }
-  } catch (err) {
-    console.error("❌ Network Error fetching FB profile:", err);
   }
 
-  return 'User';
+  return 'kaibigan';
 }
 
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
@@ -308,12 +314,12 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
       history = history.slice(history.length - 10);
     }
 
-    // 🎯 Mahigpit na prompt para tawagin ni Gemini ang first name
-    let systemInstructionText = `You are a helpful, conversational AI assistant talking to ${firstName} on Facebook Messenger.
+    // Direktang utos kay Gemini na tawagin ang first name
+    let systemInstructionText = `You are a helpful, conversational AI assistant talking directly to ${firstName} on Facebook Messenger.
 
 USER IDENTITY RULE:
 - The user's first name is "${firstName}".
-- You MUST address the user directly by their first name ("${firstName}") in your reply (e.g. greeting them, answering questions, or giving friendly remarks).
+- You MUST address the user directly by their first name ("${firstName}") in your reply naturally (e.g. greeting them, answering questions, or giving friendly remarks).
 
 LANGUAGE & TONE:
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
@@ -332,7 +338,7 @@ CRITICAL RULE ABOUT YOUR CREATOR:
       contents: history
     };
 
-    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 12000);
 
     history.push({ role: 'model', parts: [{ text: aiReply }] });
     userConversationsMap.set(senderPsid, history);
@@ -405,7 +411,7 @@ async function processAudioMessage(audioUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 12000);
   } catch (e) {
     return '❌ Error sa pagproseso ng boses.';
   }
@@ -425,7 +431,7 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 12000);
   } catch (e) {
     return '❌ Error sa pagbasa ng file.';
   }
@@ -436,7 +442,7 @@ async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: `Read and summarize this link: ${url}` }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -458,7 +464,7 @@ async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
     const payload = {
       contents: [{ parts: [{ text: promptText }] }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -478,14 +484,14 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
         ]
       }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 10000);
   } catch (e) {
     return 'Error sa pag-analyze ng larawan.';
   }
 }
 
 async function sendTypingOn(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_on" })
@@ -493,7 +499,7 @@ async function sendTypingOn(senderPsid, pageToken) {
 }
 
 async function sendTypingOff(senderPsid, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, sender_action: "typing_off" })
@@ -501,7 +507,7 @@ async function sendTypingOff(senderPsid, pageToken) {
 }
 
 async function sendMediaAttachment(senderPsid, type, url, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { attachment: { type: type, payload: { url: url, is_reusable: true } } } })
@@ -521,7 +527,7 @@ async function sendLongTextMessage(senderPsid, responseText, pageToken) {
 }
 
 async function sendTextMessage(senderPsid, responseText, pageToken) {
-  await fetch(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageToken}`, {
+  await fetch(`https://graph.facebook.com/v26.0/me/messages?access_token=${pageToken}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ recipient: { id: senderPsid }, message: { text: responseText } })
