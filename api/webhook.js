@@ -1,6 +1,6 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-flash-lite-latest',  
   'gemini-flash-latest',
+  'gemini-flash-lite-latest',
 ];
 
 const FB_GRAPH_VERSION = 'v26.0';
@@ -18,7 +18,6 @@ const processedMessageIds = new Set();
 const userPersonasMap = new Map();
 const userConversationsMap = new Map();
 const webConversationsMap = new Map();
-const userNamesCache = new Map();
 
 export default async function handler(req, res) {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -36,9 +35,10 @@ export default async function handler(req, res) {
 
 AI NAME & IDENTITY:
 - AI Name: JepongDevxyz AI
-- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing like "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI" (or in the user's current language/dialect). Never say you don't have an official name.
+- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing like "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI". Never say you don't have an official name.
 
-LANGUAGE & SPELLING RULES:
+LANGUAGE, SEARCH & SPELLING RULES:
+- Use your Google Search tool whenever needed to provide accurate, real-time, and updated information on any query (news, weather, facts, events, etc.).
 - Always use correct spelling, proper grammar, and natural phrasing. Never make typos or invent misspelled words (e.g., write "maitutulong", never "maitalong").
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
@@ -84,7 +84,8 @@ CRITICAL RULE ABOUT YOUR CREATOR:
     try {
       const payload = {
         system_instruction: { parts: [{ text: systemInstructionText }] },
-        contents: history
+        contents: history,
+        tools: [{ google_search: {} }]
       };
 
       const reply = await callGeminiApiWithFallback(payload, apiKeys, 15000);
@@ -128,7 +129,6 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
           if (messageId) {
             if (processedMessageIds.has(messageId)) {
-              console.log(`[DEDUPLICATION] Skipped duplicate: ${messageId}`);
               continue;
             }
             processedMessageIds.add(messageId);
@@ -224,7 +224,7 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 9000);
 
     try {
       const response = await fetch(endpoint, {
@@ -237,8 +237,13 @@ async function callGeminiApiWithFallback(payload, apiKeys, maxTotalTimeoutMs = 1
       clearTimeout(timer);
       const data = await response.json();
 
-      if (response.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return data.candidates[0].content.parts[0].text;
+      if (response.ok && data.candidates?.[0]?.content?.parts) {
+        const textParts = data.candidates[0].content.parts
+          .map(p => p.text || '')
+          .filter(Boolean);
+        if (textParts.length > 0) {
+          return textParts.join('\n');
+        }
       }
 
       console.warn(`[Key Switch] Model: ${modelName} | Status: ${response.status} | Err: ${data.error?.message || 'Unknown'}`);
@@ -341,9 +346,10 @@ async function processDocumentFile(fileUrl, apiKeys, senderPsid) {
 async function fetchAndSummarizeUrl(url, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `Read and summarize this link clearly with proper spelling and grammar: ${url}` }] }]
+      contents: [{ parts: [{ text: `Read and summarize this link clearly with proper spelling and grammar: ${url}` }] }],
+      tools: [{ google_search: {} }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (e) {
     return '❌ Hindi nabasa ang link.';
   }
@@ -363,9 +369,10 @@ async function generateAndSendImage(senderPsid, prompt, pageToken) {
 async function getDirectGeminiResponse(promptText, apiKeys, senderPsid) {
   try {
     const payload = {
-      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }]
+      contents: [{ parts: [{ text: `${promptText}. Siguraduhing tama ang spelling at grammar.` }] }],
+      tools: [{ google_search: {} }]
     };
-    return await callGeminiApiWithFallback(payload, apiKeys, 8000);
+    return await callGeminiApiWithFallback(payload, apiKeys, 9000);
   } catch (err) {
     return 'Pasensya na, may kaunting delay.';
   }
@@ -391,37 +398,9 @@ async function analyzeHomeworkWithGemini(imageUrl, apiKeys, senderPsid) {
   }
 }
 
-async function getFacebookUserName(senderPsid, pageToken) {
-  if (userNamesCache.has(senderPsid)) {
-    return userNamesCache.get(senderPsid);
-  }
-
-  try {
-    const response = await fetch(`https://graph.facebook.com/${FB_GRAPH_VERSION}/${senderPsid}?fields=first_name,name&access_token=${pageToken}`);
-    const data = await response.json();
-
-    if (data && !data.error) {
-      if (data.first_name && data.first_name.trim()) {
-        const firstName = data.first_name.trim();
-        userNamesCache.set(senderPsid, firstName);
-        return firstName;
-      }
-      if (data.name && data.name.trim()) {
-        const firstName = data.name.trim().split(' ')[0];
-        userNamesCache.set(senderPsid, firstName);
-        return firstName;
-      }
-    }
-  } catch (err) {
-    console.error("Error fetching Facebook name:", err);
-  }
-
-  return 'Boss';
-}
-
 async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
   try {
-    const firstName = await getFacebookUserName(senderPsid, pageToken);
+    const firstName = 'Boss';
     const lowerMsg = userMessage.toLowerCase();
 
     if (['/reset', '/refresh', '/normal', 'ibalik sa dati', 'normal mode'].some(cmd => lowerMsg.includes(cmd))) {
@@ -451,9 +430,10 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
 
 AI NAME & IDENTITY:
 - AI Name: JepongDevxyz AI
-- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing like "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI" (or in the user's current language/dialect). Never say you don't have an official name.
+- Whenever the user asks who you are, what your name is, or if you have a name (in ANY phrasing tulad ng "Sino ka?", "May pangalan ka ba?", "Anong name mo?", "Who are you?", "What is your name?"), you MUST introduce yourself clearly as: "Ako ay si JepongDevxyz AI". Never say you don't have an official name.
 
-LANGUAGE & SPELLING RULES:
+LANGUAGE, SEARCH & SPELLING RULES:
+- Use your Google Search tool whenever needed to provide accurate, real-time, and updated information on any query (news, weather, latest events, live facts, etc.).
 - Always maintain correct spelling, proper grammar, and natural flow. Avoid typos and fabricated words (e.g., use "maitutulong", never "maitalong").
 - Respond naturally in the exact language, dialect, or slang the user is using (Tagalog, Bisaya, Ilocano, English, Spanish, Japanese, Taglish, etc.).
 
@@ -468,7 +448,8 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     const payload = {
       system_instruction: { parts: [{ text: systemInstructionText }] },
-      contents: history
+      contents: history,
+      tools: [{ google_search: {} }]
     };
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
