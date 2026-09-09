@@ -26,44 +26,72 @@ function getRotatedApiKey(keysList) {
 }
 
 /**
- * 🌐 100% LIBRENG INTERNET SEARCH ENGINE (DuckDuckGo Lite/API)
+ * 🌐 100% LIBRENG SEARCH ENGINE (Wikipedia API + DuckDuckGo JSON may Timeout)
  */
 async function performFreeWebSearch(query) {
-  try {
-    const cleanQuery = query.replace(/^(search|mag-search|hanapin|ano ang balita sa|updates sa)\s+/i, '').trim();
-    const endpoint = `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`;
-    
-    const res = await fetch(endpoint, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!res.ok) return null;
-    const data = await res.json();
+  const cleanQuery = query
+    .replace(/^(search|mag-search|hanapin|ano ang balita sa|updates sa|sino si|ano ang|tungkol kay|tungkol sa)\s+/i, '')
+    .trim();
 
-    let snippets = [];
-    if (data.AbstractText) snippets.push(data.AbstractText);
-    if (Array.isArray(data.RelatedTopics)) {
-      for (const topic of data.RelatedTopics.slice(0, 3)) {
-        if (topic.Text) snippets.push(topic.Text);
+  if (!cleanQuery) return null;
+
+  // 1. Wikipedia Summary API (Mabilis, hindi bina-block sa Vercel/Cloud servers)
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+
+    const wikiUrl = `https://tl.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`;
+    let wikiRes = await fetch(wikiUrl, {
+      headers: { 'User-Agent': 'JepongDevxyzBot/1.0 (contact@jepongdev.xyz)' },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    if (!wikiRes.ok) {
+      const enController = new AbortController();
+      const enTimeout = setTimeout(() => enController.abort(), 2500);
+      wikiRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`, {
+        headers: { 'User-Agent': 'JepongDevxyzBot/1.0 (contact@jepongdev.xyz)' },
+        signal: enController.signal
+      });
+      clearTimeout(enTimeout);
+    }
+
+    if (wikiRes.ok) {
+      const wikiData = await wikiRes.json();
+      if (wikiData.extract) {
+        return wikiData.extract;
       }
     }
-
-    if (snippets.length > 0) {
-      return snippets.join('\n\n');
-    }
-
-    // Fallback: DDG HTML Search kung walang abstract
-    const htmlRes = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    const html = await htmlRes.text();
-    const matches = [...html.matchAll(/<a class="result__snippet[^>]*>(.*?)<\/a>/g)]
-      .map(m => m[1].replace(/<[^>]+>/g, '').trim())
-      .filter(Boolean)
-      .slice(0, 3);
-
-    return matches.length > 0 ? matches.join('\n\n') : null;
   } catch (e) {
-    console.error("Free Search Error:", e.message);
-    return null;
+    console.warn("[Wiki Search Skipped/Timeout]:", e.message);
   }
+
+  // 2. DuckDuckGo Instant Answer API (JSON format)
+  try {
+    const ddgController = new AbortController();
+    const ddgTimeout = setTimeout(() => ddgController.abort(), 2500);
+
+    const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}&format=json&no_html=1&skip_disambig=1`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: ddgController.signal
+    });
+
+    clearTimeout(ddgTimeout);
+
+    if (ddgRes.ok) {
+      const ddgData = await ddgRes.json();
+      if (ddgData.AbstractText) return ddgData.AbstractText;
+      if (Array.isArray(ddgData.RelatedTopics) && ddgData.RelatedTopics[0]?.Text) {
+        return ddgData.RelatedTopics.slice(0, 2).map(t => t.Text).join('\n');
+      }
+    }
+  } catch (e) {
+    console.warn("[DDG Search Skipped/Timeout]:", e.message);
+  }
+
+  return null;
 }
 
 const processedMessageIds = new Set();
@@ -119,11 +147,14 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     let finalPrompt = message && message.trim() ? message : 'Kumusta!';
 
-    // Libreng auto web-search check
     if (/(balita|sino si|ano ang|kailan|update|presyo|weather|search|score)/i.test(finalPrompt)) {
-      const searchResults = await performFreeWebSearch(finalPrompt);
-      if (searchResults) {
-        finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
+      try {
+        const searchResults = await performFreeWebSearch(finalPrompt);
+        if (searchResults) {
+          finalPrompt += `\n\n[Live Internet Search Context]:\n${searchResults}`;
+        }
+      } catch (err) {
+        console.warn("Search check skipped:", err.message);
       }
     }
 
@@ -325,7 +356,7 @@ async function handleCommandAction(senderPsid, input, apiKeys, pageToken, adminP
     await sendTypingOn(senderPsid, pageToken);
     const query = input.replace(/^\/search\s*/i, '').trim();
     const results = await performFreeWebSearch(query);
-    const reply = await getDirectGeminiResponse(`Sagutin ito batay sa impormasyong ito:\n\n${results || 'Walang nahanap.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
+    const reply = await getDirectGeminiResponse(`Sagutin ito nang malinaw at wasto batay sa sumusunod na impormasyon:\n\n${results || 'Walang nahanap na detalye.'}\n\nTanong: ${query}`, apiKeys, senderPsid);
     await sendLongTextMessage(senderPsid, `🌐 **Web Search Result:**\n\n${reply}`, pageToken);
     await sendTypingOff(senderPsid, pageToken);
     return true;
@@ -478,12 +509,15 @@ async function processDirectAI(senderPsid, userMessage, apiKeys, pageToken) {
     let history = userConversationsMap.get(senderPsid) || [];
     let messageToSend = userMessage;
 
-    // Libreng auto web-search trigger kapag may tanong na nangangailangan ng latest/live data
     const isSearchQuery = /kailan|sino si|ano ang balita|latest|updates sa|search|presyo|petsa|panahon|weather/i.test(userMessage);
     if (isSearchQuery) {
-      const searchData = await performFreeWebSearch(userMessage);
-      if (searchData) {
-        messageToSend = `${userMessage}\n\n[Live Internet Search Data]:\n${searchData}`;
+      try {
+        const searchData = await performFreeWebSearch(userMessage);
+        if (searchData) {
+          messageToSend = `${userMessage}\n\n[Live Internet Search Data]:\n${searchData}`;
+        }
+      } catch (err) {
+        console.warn("Search fetch failed, proceeding with model base:", err.message);
       }
     }
 
@@ -520,7 +554,6 @@ CRITICAL RULE ABOUT YOUR CREATOR:
 
     const aiReply = await callGeminiApiWithFallback(payload, apiKeys, 10000);
 
-    // I-save ang orihinal na tanong sa memory para malinis ang history
     history[history.length - 1] = { role: 'user', parts: [{ text: userMessage }] };
     history.push({ role: 'model', parts: [{ text: aiReply }] });
     userConversationsMap.set(senderPsid, history);
