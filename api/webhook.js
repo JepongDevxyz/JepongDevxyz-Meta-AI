@@ -643,7 +643,6 @@ async function performFreeWebSearch(
 
   return null;
 }
-
 /* =========================================================
    MEMORY
 ========================================================= */
@@ -1929,7 +1928,6 @@ ${query}`,
 
   return false;
 }
-
 /* =========================================================
    AUDIO
 ========================================================= */
@@ -2728,17 +2726,60 @@ async function sendMediaAttachment(
 }
 
 /* =========================================================
+   MESSENGER TEXT CLEANUP
+========================================================= */
+
+function cleanMessengerFormatting(
+  text
+) {
+  return String(
+    text ?? ''
+  )
+    .replace(
+      /\r\n/g,
+      '\n'
+    )
+    .replace(
+      /^\s{0,3}#{1,6}\s+/gm,
+      ''
+    )
+    .replace(
+      /^\s*[*_-]{3,}\s*$/gm,
+      '━━━━━━━━━━━━━━━━━━'
+    )
+    .replace(
+      /\*\*(.*?)\*\*/g,
+      '$1'
+    )
+    .replace(
+      /__(.*?)__/g,
+      '$1'
+    )
+    .replace(
+      /\n{3,}/g,
+      '\n\n'
+    )
+    .trim();
+}
+
+/* =========================================================
    LONG MESSAGE SPLITTER
 ========================================================= */
 
 function splitLongMessage(
   text,
-  maxLength = 1900
+  maxLength = 1800
 ) {
   const source =
     String(
       text ?? ''
-    );
+    ).trim();
+
+  if (
+    !source
+  ) {
+    return [];
+  }
 
   if (
     source.length <=
@@ -2760,7 +2801,7 @@ function splitLongMessage(
   ) {
     let cut =
       remaining.lastIndexOf(
-        '\n',
+        '\n\n',
         maxLength
       );
 
@@ -2768,7 +2809,42 @@ function splitLongMessage(
       cut <
       Math.floor(
         maxLength *
-          0.55
+          0.5
+      )
+    ) {
+      cut =
+        remaining.lastIndexOf(
+          '\n',
+          maxLength
+        );
+    }
+
+    if (
+      cut <
+      Math.floor(
+        maxLength *
+          0.5
+      )
+    ) {
+      cut =
+        remaining.lastIndexOf(
+          '. ',
+          maxLength
+        );
+
+      if (
+        cut >
+        0
+      ) {
+        cut += 1;
+      }
+    }
+
+    if (
+      cut <
+      Math.floor(
+        maxLength *
+          0.5
       )
     ) {
       cut =
@@ -2779,34 +2855,34 @@ function splitLongMessage(
     }
 
     if (
-      cut <
-      Math.floor(
-        maxLength *
-          0.4
-      )
+      cut <= 0
     ) {
       cut =
         maxLength;
     }
 
-    chunks.push(
+    const chunk =
       remaining
         .slice(
           0,
           cut
         )
-        .trimEnd()
-    );
+        .trim();
+
+    if (
+      chunk
+    ) {
+      chunks.push(
+        chunk
+      );
+    }
 
     remaining =
       remaining
         .slice(
           cut
         )
-        .replace(
-          /^\s+/,
-          ''
-        );
+        .trim();
   }
 
   if (
@@ -2817,9 +2893,7 @@ function splitLongMessage(
     );
   }
 
-  return chunks.filter(
-    Boolean
-  );
+  return chunks;
 }
 
 /* =========================================================
@@ -2831,20 +2905,58 @@ async function sendLongTextMessage(
   responseText,
   pageToken
 ) {
-  const chunks =
-    splitLongMessage(
-      responseText,
-      1900
+  const cleanText =
+    cleanMessengerFormatting(
+      responseText
     );
 
-  for (
-    const chunk of chunks
+  if (
+    !cleanText
   ) {
+    return;
+  }
+
+  const chunks =
+    splitLongMessage(
+      cleanText,
+      1800
+    );
+
+  const totalParts =
+    chunks.length;
+
+  for (
+    let index = 0;
+    index <
+    totalParts;
+    index++
+  ) {
+    const prefix =
+      totalParts > 1
+        ? `📄 Part ${index + 1}/${totalParts}\n\n`
+        : '';
+
     await sendTextMessage(
       senderPsid,
-      chunk,
+
+      prefix +
+        chunks[index],
+
       pageToken
     );
+
+    if (
+      index <
+      totalParts - 1
+    ) {
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            250
+          )
+      );
+    }
   }
 }
 
