@@ -1,55 +1,29 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-3.5-flash-lite',
   'gemini-flash-lite-latest',
+  'gemini-3.5-flash-lite',
   'gemini-flash-latest'
 ];
 
 const FB_GRAPH_VERSION = process.env.FB_GRAPH_VERSION || 'v26.0';
-
 const MAX_HISTORY_ITEMS = 10;
 const MAX_CONVERSATIONS = 500;
 const MAX_INLINE_BYTES = 18 * 1024 * 1024;
 const MAX_WEB_MESSAGE_CHARS = 12000;
+const MESSENGER_CHUNK_SIZE = 1800;
 
 let currentKeyIndex = 0;
 
-/* =========================================================
-   GEMINI API KEYS
-========================================================= */
-
 function getApiKeysList() {
-  const rawKeys =
+  const raw =
     process.env.GEMINI_API_KEYS ||
     process.env.GEMINI_API_KEY ||
     '';
 
-  return rawKeys
+  return raw
     .split(',')
-    .map(key => key.trim())
+    .map(k => k.trim())
     .filter(Boolean);
 }
-
-function getRotatedApiKey(keysList) {
-  if (!keysList || keysList.length === 0) {
-    return null;
-  }
-
-  const key =
-    keysList[
-      currentKeyIndex %
-      keysList.length
-    ];
-
-  currentKeyIndex =
-    (currentKeyIndex + 1) %
-    keysList.length;
-
-  return key;
-}
-
-/* =========================================================
-   HELPERS
-========================================================= */
 
 function normalizeWebSessionId(sessionId) {
   if (typeof sessionId !== 'string') {
@@ -71,7 +45,9 @@ function setLimitedConversation(
   key,
   value
 ) {
-  if (!key) return;
+  if (!key) {
+    return;
+  }
 
   if (map.has(key)) {
     map.delete(key);
@@ -86,63 +62,79 @@ function setLimitedConversation(
     map.size >
     MAX_CONVERSATIONS
   ) {
-    const oldestKey =
-      map.keys()
-        .next()
-        .value;
-
     map.delete(
-      oldestKey
+      map
+        .keys()
+        .next()
+        .value
     );
   }
 }
 
-function stripDataUrlPrefix(value) {
-  if (typeof value !== 'string') {
+function stripDataUrlPrefix(
+  value
+) {
+  if (
+    typeof value !==
+    'string'
+  ) {
     return '';
   }
 
   const comma =
     value.indexOf(',');
 
-  if (
-    value.startsWith('data:') &&
+  return (
+    value.startsWith(
+      'data:'
+    ) &&
     comma !== -1
-  ) {
-    return value.slice(
-      comma + 1
-    );
-  }
-
-  return value;
+  )
+    ? value.slice(
+        comma + 1
+      )
+    : value;
 }
 
-function extractGeminiText(data) {
+function extractGeminiText(
+  data
+) {
   const parts =
-    data?.candidates?.[0]
+    data
+      ?.candidates?.[0]
       ?.content?.parts;
 
-  if (!Array.isArray(parts)) {
+  if (
+    !Array.isArray(
+      parts
+    )
+  ) {
     return '';
   }
 
   return parts
     .filter(
-      part =>
-        typeof part?.text ===
+      p =>
+        typeof p?.text ===
           'string' &&
-        part.text.trim() &&
-        !part.thought
+        p.text.trim() &&
+        !p.thought
     )
     .map(
-      part => part.text
+      p =>
+        p.text
     )
     .join('\n')
     .trim();
 }
 
-function extractUrls(text) {
-  if (typeof text !== 'string') {
+function extractUrls(
+  text
+) {
+  if (
+    typeof text !==
+    'string'
+  ) {
     return [];
   }
 
@@ -160,7 +152,10 @@ function extractUrls(text) {
           )
       )
     )
-  ].slice(0, 20);
+  ].slice(
+    0,
+    20
+  );
 }
 
 async function fetchBinaryAsBase64(
@@ -187,7 +182,9 @@ async function fetchBinaryAsBase64(
         }
       );
 
-    if (!response.ok) {
+    if (
+      !response.ok
+    ) {
       throw new Error(
         `Download failed: HTTP ${response.status}`
       );
@@ -243,6 +240,7 @@ async function fetchBinaryAsBase64(
 
       mimeType
     };
+
   } finally {
     clearTimeout(
       timer
@@ -250,42 +248,36 @@ async function fetchBinaryAsBase64(
   }
 }
 
-/* =========================================================
-   PHILIPPINE TIME
-========================================================= */
-
 function getPhilippineDateTime() {
-  const now =
-    new Date();
+  return new Date()
+    .toLocaleString(
+      'en-US',
+      {
+        timeZone:
+          'Asia/Manila',
 
-  return now.toLocaleString(
-    'en-US',
-    {
-      timeZone:
-        'Asia/Manila',
+        weekday:
+          'long',
 
-      weekday:
-        'long',
+        year:
+          'numeric',
 
-      year:
-        'numeric',
+        month:
+          'long',
 
-      month:
-        'long',
+        day:
+          'numeric',
 
-      day:
-        'numeric',
+        hour:
+          'numeric',
 
-      hour:
-        'numeric',
+        minute:
+          '2-digit',
 
-      minute:
-        '2-digit',
-
-      hour12:
-        true
-    }
-  );
+        hour12:
+          true
+      }
+    );
 }
 
 /* =========================================================
@@ -305,31 +297,34 @@ async function performFreeWebSearch(
       )
       .trim();
 
-  if (!cleanQuery) {
+  if (
+    !cleanQuery
+  ) {
     return null;
   }
 
   const liveIntent =
-    /(latest|update|balita|ngayon|today|current|presyo|price|score|weather|panahon|forecast)/i.test(
-      cleanQuery
-    );
+    /(latest|update|balita|ngayon|today|current|presyo|price|score|weather|panahon|forecast)/i
+      .test(
+        cleanQuery
+      );
 
   const searchQuery =
     liveIntent
       ? `${cleanQuery} ${new Date().getFullYear()}`
       : cleanQuery;
 
-  /* ===========================
-     WEATHER
-  =========================== */
-
+  /*
+   * WEATHER
+   */
   if (
-    /weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast/i.test(
-      cleanQuery
-    )
+    /weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast/i
+      .test(
+        cleanQuery
+      )
   ) {
     try {
-      let place =
+      const place =
         cleanQuery
           .replace(
             /\b(weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast|ngayon|today|current|kumusta)\b/gi,
@@ -346,7 +341,9 @@ async function performFreeWebSearch(
           )
           .trim();
 
-      if (place) {
+      if (
+        place
+      ) {
         const geoRes =
           await fetch(
             `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
@@ -354,12 +351,15 @@ async function performFreeWebSearch(
             )}&count=1&language=en&format=json`
           );
 
-        if (geoRes.ok) {
+        if (
+          geoRes.ok
+        ) {
           const geoData =
             await geoRes.json();
 
           if (
-            geoData.results?.[0]
+            geoData
+              .results?.[0]
           ) {
             const {
               latitude,
@@ -368,7 +368,8 @@ async function performFreeWebSearch(
               admin1,
               country
             } =
-              geoData.results[0];
+              geoData
+                .results[0];
 
             const weatherRes =
               await fetch(
@@ -381,12 +382,12 @@ async function performFreeWebSearch(
               const weatherData =
                 await weatherRes.json();
 
-              if (
-                weatherData.current
-              ) {
-                const c =
-                  weatherData.current;
+              const c =
+                weatherData.current;
 
+              if (
+                c
+              ) {
                 return (
                   `Live Weather Report (${name}, ${admin1 || ''}, ${country})\n` +
                   `Temperature: ${c.temperature_2m}°C\n` +
@@ -400,7 +401,10 @@ async function performFreeWebSearch(
           }
         }
       }
-    } catch (error) {
+
+    } catch (
+      error
+    ) {
       console.warn(
         '[Weather API Error]',
         error.message
@@ -408,111 +412,105 @@ async function performFreeWebSearch(
     }
   }
 
-  /* ===========================
-     TAVILY
-  =========================== */
-
+  /*
+   * TAVILY
+   */
   const tavilyKey =
-    process.env.TAVILY_API_KEY;
+    process.env
+      .TAVILY_API_KEY;
 
-  if (tavilyKey) {
+  if (
+    tavilyKey
+  ) {
+    const controller =
+      new AbortController();
+
+    const timer =
+      setTimeout(
+        () =>
+          controller.abort(),
+        5000
+      );
+
     try {
-      const controller =
-        new AbortController();
+      const response =
+        await fetch(
+          'https://api.tavily.com/search',
+          {
+            method:
+              'POST',
 
-      const timer =
-        setTimeout(
-          () =>
-            controller.abort(),
-          5000
+            headers: {
+              'Content-Type':
+                'application/json',
+
+              Authorization:
+                `Bearer ${tavilyKey}`
+            },
+
+            body:
+              JSON.stringify({
+                query:
+                  searchQuery,
+
+                search_depth:
+                  'basic',
+
+                max_results:
+                  4
+              }),
+
+            signal:
+              controller.signal
+          }
         );
 
-      try {
-        const response =
-          await fetch(
-            'https://api.tavily.com/search',
-            {
-              method:
-                'POST',
-
-              headers: {
-                'Content-Type':
-                  'application/json',
-
-                Authorization:
-                  `Bearer ${tavilyKey}`
-              },
-
-              body:
-                JSON.stringify(
-                  {
-                    query:
-                      searchQuery,
-
-                    search_depth:
-                      'basic',
-
-                    max_results:
-                      4
-                  }
-                ),
-
-              signal:
-                controller.signal
-            }
-          );
+      if (
+        response.ok
+      ) {
+        const data =
+          await response.json();
 
         if (
-          response.ok
+          Array.isArray(
+            data.results
+          ) &&
+          data.results.length
         ) {
-          const data =
-            await response.json();
-
-          if (
-            Array.isArray(
-              data.results
-            ) &&
-            data.results.length >
-              0
-          ) {
-            return data.results
-              .slice(
-                0,
-                4
-              )
-              .map(
-                result =>
-                  `• ${
-                    result.title ||
-                    'Result'
-                  }: ${
-                    result.content ||
-                    result.url ||
-                    ''
-                  }`
-              )
-              .join(
-                '\n\n'
-              );
-          }
+          return data
+            .results
+            .slice(
+              0,
+              4
+            )
+            .map(
+              r =>
+                `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
+            )
+            .join(
+              '\n\n'
+            );
         }
-      } finally {
-        clearTimeout(
-          timer
-        );
       }
-    } catch (error) {
+
+    } catch (
+      error
+    ) {
       console.warn(
         '[Tavily Search Failed]',
         error.message
       );
+
+    } finally {
+      clearTimeout(
+        timer
+      );
     }
   }
 
-  /* ===========================
-     SEARXNG
-  =========================== */
-
+  /*
+   * SEARXNG
+   */
   const instances = [
     'https://search.ononoki.org',
     'https://searx.be',
@@ -520,99 +518,89 @@ async function performFreeWebSearch(
   ];
 
   for (
-    const instance of instances
+    const instance of
+    instances
   ) {
-    try {
-      const controller =
-        new AbortController();
+    const controller =
+      new AbortController();
 
-      const timer =
-        setTimeout(
-          () =>
-            controller.abort(),
-          3500
+    const timer =
+      setTimeout(
+        () =>
+          controller.abort(),
+        3500
+      );
+
+    try {
+      const searchUrl =
+        `${instance}/search?q=${encodeURIComponent(
+          searchQuery
+        )}&format=json&language=tl,en`;
+
+      const response =
+        await fetch(
+          searchUrl,
+          {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0)'
+            },
+
+            signal:
+              controller.signal
+          }
         );
 
-      try {
-        const searchUrl =
-          `${instance}/search?q=` +
-          `${encodeURIComponent(
-            searchQuery
-          )}` +
-          `&format=json&language=tl,en`;
-
-        const response =
-          await fetch(
-            searchUrl,
-            {
-              headers: {
-                'User-Agent':
-                  'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0)'
-              },
-
-              signal:
-                controller.signal
-            }
-          );
+      if (
+        response.ok
+      ) {
+        const data =
+          await response.json();
 
         if (
-          response.ok
+          Array.isArray(
+            data.results
+          ) &&
+          data.results.length
         ) {
-          const data =
-            await response.json();
+          const results =
+            data.results
+              .slice(
+                0,
+                4
+              )
+              .map(
+                r =>
+                  `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
+              )
+              .filter(
+                Boolean
+              );
 
           if (
-            Array.isArray(
-              data.results
-            ) &&
-            data.results.length >
-              0
+            results.length
           ) {
-            const results =
-              data.results
-                .slice(
-                  0,
-                  4
-                )
-                .map(
-                  result =>
-                    `• ${
-                      result.title ||
-                      'Result'
-                    }: ${
-                      result.content ||
-                      result.url ||
-                      ''
-                    }`
-                )
-                .filter(
-                  Boolean
-                );
-
-            if (
-              results.length >
-              0
-            ) {
-              return results.join(
+            return results
+              .join(
                 '\n\n'
               );
-            }
           }
         }
-      } finally {
-        clearTimeout(
-          timer
-        );
       }
-    } catch (error) {
-      // Try next SearXNG instance.
+
+    } catch (_) {
+      // Try next instance.
+
+    } finally {
+      clearTimeout(
+        timer
+      );
     }
   }
 
-  /* ===========================
-     WIKIPEDIA FALLBACK
-  =========================== */
-
+  /*
+   * WIKIPEDIA FALLBACK
+   */
   try {
     const wikiRes =
       await fetch(
@@ -639,10 +627,12 @@ async function performFreeWebSearch(
         return data.extract;
       }
     }
-  } catch (error) {}
+
+  } catch (_) {}
 
   return null;
 }
+
 /* =========================================================
    MEMORY
 ========================================================= */
@@ -668,13 +658,16 @@ export default async function handler(
   res
 ) {
   const VERIFY_TOKEN =
-    process.env.VERIFY_TOKEN;
+    process.env
+      .VERIFY_TOKEN;
 
   const PAGE_ACCESS_TOKEN =
-    process.env.PAGE_ACCESS_TOKEN;
+    process.env
+      .PAGE_ACCESS_TOKEN;
 
   const ADMIN_PSID =
-    process.env.ADMIN_PSID;
+    process.env
+      .ADMIN_PSID;
 
   const apiKeys =
     getApiKeysList();
@@ -682,15 +675,14 @@ export default async function handler(
   const currentDateTimePH =
     getPhilippineDateTime();
 
-  /* =======================================================
-     WEB CHAT
-  ======================================================= */
-
+  /*
+   * WEB CHAT
+   */
   if (
     req.method ===
       'POST' &&
-    req.body &&
-    req.body.isWebChat
+    req.body
+      ?.isWebChat
   ) {
     const {
       message,
@@ -705,7 +697,7 @@ export default async function handler(
       );
 
     if (
-      apiKeys.length === 0
+      !apiKeys.length
     ) {
       return res
         .status(500)
@@ -726,8 +718,36 @@ export default async function handler(
             )
         : '';
 
-    const systemInstructionText = `
-You are JepongDevxyz AI, a state-of-the-art analytical AI assistant chatting with Boss.
+    if (
+      cleanMessage &&
+      [
+        '/reset',
+        '/refresh',
+        'reset'
+      ].includes(
+        cleanMessage
+          .toLowerCase()
+      )
+    ) {
+      if (
+        sessionKey
+      ) {
+        webConversationsMap
+          .delete(
+            sessionKey
+          );
+      }
+
+      return res
+        .status(200)
+        .json({
+          reply:
+            '✓ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?'
+        });
+    }
+
+    const systemInstructionText =
+`You are JepongDevxyz AI, a state-of-the-art analytical AI assistant chatting with Boss.
 
 TEMPORAL GROUND TRUTH:
 - Exact Philippine Date & Time: ${currentDateTimePH}
@@ -742,45 +762,23 @@ WRITING:
 - Be accurate, logical and useful.
 - Use correct spelling and grammar.
 - Automatically match the user's language.
-- Never invent live information.
-`;
+- Never invent live information.`;
 
     let history =
       sessionKey
-        ? webConversationsMap.get(
-            sessionKey
-          ) || []
+        ? (
+            webConversationsMap
+              .get(
+                sessionKey
+              ) ||
+            []
+          )
         : [];
-
-    if (
-      cleanMessage &&
-      [
-        '/reset',
-        '/refresh',
-        'reset'
-      ].includes(
-        cleanMessage.toLowerCase()
-      )
-    ) {
-      if (
-        sessionKey
-      ) {
-        webConversationsMap.delete(
-          sessionKey
-        );
-      }
-
-      return res
-        .status(200)
-        .json({
-          reply:
-            '✓ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?'
-        });
-    }
 
     const userParts = [];
 
-    const safeAttachments =
+    for (
+      const item of
       Array.isArray(
         attachments
       )
@@ -788,11 +786,7 @@ WRITING:
             0,
             4
           )
-        : [];
-
-    for (
-      const item of
-      safeAttachments
+        : []
     ) {
       const rawBase64 =
         stripDataUrlPrefix(
@@ -802,7 +796,8 @@ WRITING:
       const mimeType =
         typeof item?.mimeType ===
         'string'
-          ? item.mimeType
+          ? item
+              .mimeType
               .trim()
               .toLowerCase()
           : '';
@@ -821,9 +816,9 @@ WRITING:
             MAX_INLINE_BYTES *
             4
           ) /
-            3
+          3
         ) +
-          16
+        16
       ) {
         continue;
       }
@@ -844,9 +839,10 @@ WRITING:
       'Kumusta!';
 
     if (
-      /(balita|sino si|kailan|latest|update|presyo|weather|panahon|search|score|oras|petsa)/i.test(
-        finalPrompt
-      )
+      /(balita|sino si|kailan|latest|update|presyo|weather|panahon|search|score|oras|petsa)/i
+        .test(
+          finalPrompt
+        )
     ) {
       try {
         const results =
@@ -860,6 +856,7 @@ WRITING:
           finalPrompt +=
             `\n\n[Live Real-Time Web Data]:\n${results}`;
         }
+
       } catch (
         error
       ) {
@@ -891,25 +888,25 @@ WRITING:
       );
 
     try {
-      const payload = {
-        system_instruction: {
-          parts: [
-            {
-              text:
-                systemInstructionText
-            }
-          ]
-        },
-
-        contents:
-          requestHistory
-      };
-
       const reply =
         await callGeminiApiWithFallback(
-          payload,
+          {
+            system_instruction: {
+              parts: [
+                {
+                  text:
+                    systemInstructionText
+                }
+              ]
+            },
+
+            contents:
+              requestHistory
+          },
+
           apiKeys,
-          18000
+
+          35000
         );
 
       history.push({
@@ -953,6 +950,7 @@ WRITING:
         .json({
           reply
         });
+
     } catch (
       error
     ) {
@@ -970,28 +968,24 @@ WRITING:
     }
   }
 
-  /* =======================================================
-     FACEBOOK VERIFICATION
-  ======================================================= */
-
+  /*
+   * FACEBOOK VERIFICATION
+   */
   if (
     req.method ===
     'GET'
   ) {
     const mode =
-      req.query?.[
-        'hub.mode'
-      ];
+      req.query
+        ?.['hub.mode'];
 
     const token =
-      req.query?.[
-        'hub.verify_token'
-      ];
+      req.query
+        ?.['hub.verify_token'];
 
     const challenge =
-      req.query?.[
-        'hub.challenge'
-      ];
+      req.query
+        ?.['hub.challenge'];
 
     if (
       VERIFY_TOKEN &&
@@ -1014,10 +1008,9 @@ WRITING:
       );
   }
 
-  /* =======================================================
-     FACEBOOK MESSENGER WEBHOOK
-  ======================================================= */
-
+  /*
+   * FACEBOOK MESSENGER WEBHOOK
+   */
   if (
     req.method ===
     'POST'
@@ -1026,351 +1019,282 @@ WRITING:
       req.body;
 
     if (
-      body?.object ===
+      body?.object !==
       'page'
     ) {
-      if (
-        !PAGE_ACCESS_TOKEN
-      ) {
-        console.error(
-          'Missing PAGE_ACCESS_TOKEN.'
+      return res
+        .status(404)
+        .send(
+          'Not Found'
         );
+    }
 
-        return res
-          .status(500)
-          .send(
-            'Messenger is not configured'
-          );
-      }
+    if (
+      !PAGE_ACCESS_TOKEN
+    ) {
+      console.error(
+        'Missing PAGE_ACCESS_TOKEN.'
+      );
 
-      try {
+      return res
+        .status(500)
+        .send(
+          'Messenger is not configured'
+        );
+    }
+
+    try {
+      for (
+        const entry of
+        body.entry || []
+      ) {
         for (
-          const entry of
-          body.entry || []
+          const webhookEvent of
+          entry.messaging || []
         ) {
-          for (
-            const webhookEvent of
-            entry.messaging || []
+          const senderPsid =
+            webhookEvent
+              .sender?.id ||
+            null;
+
+          /*
+           * ADMIN PSID DEBUG
+           */
+          console.log(
+            '📌 SENDER PSID:',
+            senderPsid
+          );
+
+          if (
+            !senderPsid
           ) {
-            const senderPsid =
-              webhookEvent
-                .sender?.id ||
-              null;
+            continue;
+          }
 
-            /*
-             * =================================================
-             * ADMIN PSID DEBUG
-             * Tingnan ito sa Vercel Logs pagkatapos mong
-             * mag-message sa Facebook Page.
-             * =================================================
-             */
+          const messageId =
+            webhookEvent
+              .message?.mid ||
+            null;
 
-            console.log(
-              '📌 SENDER PSID:',
-              senderPsid
-            );
-
-            const messageId =
-              webhookEvent
-                .message?.mid ||
-              null;
-
+          if (
+            messageId
+          ) {
             if (
-              !senderPsid
+              processedMessageIds
+                .has(
+                  messageId
+                )
             ) {
               continue;
             }
 
-            if (
-              messageId
-            ) {
-              if (
-                processedMessageIds.has(
-                  messageId
-                )
-              ) {
-                continue;
-              }
-
-              processedMessageIds.add(
+            processedMessageIds
+              .add(
                 messageId
               );
 
-              const cleanupTimer =
-                setTimeout(
-                  () =>
-                    processedMessageIds.delete(
+            const cleanupTimer =
+              setTimeout(
+                () =>
+                  processedMessageIds
+                    .delete(
                       messageId
                     ),
-                  300000
-                );
+                300000
+              );
 
-              cleanupTimer.unref?.();
-            }
+            cleanupTimer
+              .unref?.();
+          }
 
-            /* ==========================
-               POSTBACK
-            ========================== */
+          /*
+           * POSTBACK
+           */
+          if (
+            webhookEvent
+              .postback
+              ?.payload
+          ) {
+            await handleCommandAction(
+              senderPsid,
 
-            if (
               webhookEvent
                 .postback
-                ?.payload
-            ) {
-              await handleCommandAction(
-                senderPsid,
+                .payload,
 
-                webhookEvent
-                  .postback
-                  .payload,
+              apiKeys,
 
-                apiKeys,
+              PAGE_ACCESS_TOKEN,
 
-                PAGE_ACCESS_TOKEN,
+              ADMIN_PSID,
 
-                ADMIN_PSID,
+              currentDateTimePH
+            );
 
-                currentDateTimePH
-              );
+            continue;
+          }
 
-              continue;
-            }
+          const incomingMessage =
+            webhookEvent
+              .message;
 
-            const incomingMessage =
-              webhookEvent.message;
+          if (
+            !incomingMessage ||
+            incomingMessage
+              .is_echo
+          ) {
+            continue;
+          }
 
-            if (
-              !incomingMessage ||
-              incomingMessage.is_echo
-            ) {
-              continue;
-            }
+          /*
+           * ATTACHMENT
+           */
+          const attachment =
+            incomingMessage
+              .attachments?.[0];
 
-            /* ==========================
-               ATTACHMENTS
-            ========================== */
-
-            const attachment =
-              incomingMessage
-                .attachments?.[0];
-
-            if (
-              attachment?.payload
-                ?.url
-            ) {
-              await sendTypingOn(
-                senderPsid,
-                PAGE_ACCESS_TOKEN
-              );
-
-              try {
-                if (
-                  attachment.type ===
-                  'audio'
-                ) {
-                  const voiceReply =
-                    await processAudioMessage(
-                      attachment
-                        .payload
-                        .url,
-
-                      apiKeys,
-
-                      senderPsid
-                    );
-
-                  await sendLongTextMessage(
-                    senderPsid,
-                    voiceReply,
-                    PAGE_ACCESS_TOKEN
-                  );
-
-                  continue;
-                }
-
-                if (
-                  attachment.type ===
-                  'image'
-                ) {
-                  const visionReply =
-                    await analyzeHomeworkWithGemini(
-                      attachment
-                        .payload
-                        .url,
-
-                      apiKeys,
-
-                      senderPsid
-                    );
-
-                  await sendLongTextMessage(
-                    senderPsid,
-                    visionReply,
-                    PAGE_ACCESS_TOKEN
-                  );
-
-                  continue;
-                }
-
-                if (
-                  attachment.type ===
-                  'file'
-                ) {
-                  const docReply =
-                    await processDocumentFile(
-                      attachment
-                        .payload
-                        .url,
-
-                      apiKeys,
-
-                      senderPsid
-                    );
-
-                  await sendLongTextMessage(
-                    senderPsid,
-                    docReply,
-                    PAGE_ACCESS_TOKEN
-                  );
-
-                  continue;
-                }
-              } finally {
-                await sendTypingOff(
-                  senderPsid,
-                  PAGE_ACCESS_TOKEN
-                );
-              }
-            }
-
-            /* ==========================
-               NORMAL MESSAGE
-            ========================== */
-
-            const userMessage =
-              incomingMessage.text
-                ? incomingMessage.text.trim()
-                : '';
-
-            const quickReplyPayload =
-              incomingMessage
-                .quick_reply
-                ?.payload ||
-              null;
-
-            const finalMessage =
-              quickReplyPayload ||
-              userMessage;
-
-            if (
-              !finalMessage
-            ) {
-              continue;
-            }
-
-            /* ==========================
-               PERIODIC TABLE
-            ========================== */
-
-            if (
-              finalMessage
-                .toLowerCase()
-                .includes(
-                  'periodic table'
-                )
-            ) {
-              await sendTextMessage(
-                senderPsid,
-
-                '🧪 Periodic Table of Elements (HD)',
-
-                PAGE_ACCESS_TOKEN
-              );
-
-              await sendMediaAttachment(
-                senderPsid,
-
-                'image',
-
-                'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg',
-
-                PAGE_ACCESS_TOKEN
-              );
-
-              continue;
-            }
-
-            /* ==========================
-               COMMANDS
-            ========================== */
-
-            const handled =
-              await handleCommandAction(
-                senderPsid,
-
-                finalMessage,
-
-                apiKeys,
-
-                PAGE_ACCESS_TOKEN,
-
-                ADMIN_PSID,
-
-                currentDateTimePH
-              );
-
-            if (
-              handled
-            ) {
-              continue;
-            }
-
+          if (
+            attachment
+              ?.payload?.url
+          ) {
             await sendTypingOn(
               senderPsid,
               PAGE_ACCESS_TOKEN
             );
 
-            /* ==========================
-               URL CONTEXT
-            ========================== */
+            try {
+              if (
+                attachment.type ===
+                'audio'
+              ) {
+                const reply =
+                  await processAudioMessage(
+                    attachment
+                      .payload
+                      .url,
 
-            if (
-              /https?:\/\/[^\s]+/i.test(
-                finalMessage
-              )
-            ) {
-              try {
-                const urlSummary =
-                  await fetchAndSummarizeUrl(
-                    finalMessage,
-
-                    apiKeys,
-
-                    senderPsid
+                    apiKeys
                   );
 
                 await sendLongTextMessage(
                   senderPsid,
-
-                  urlSummary,
-
+                  reply,
                   PAGE_ACCESS_TOKEN
                 );
-              } finally {
-                await sendTypingOff(
-                  senderPsid,
-                  PAGE_ACCESS_TOKEN
-                );
+
+                continue;
               }
 
-              continue;
+              if (
+                attachment.type ===
+                'image'
+              ) {
+                const reply =
+                  await analyzeHomeworkWithGemini(
+                    attachment
+                      .payload
+                      .url,
+
+                    apiKeys
+                  );
+
+                await sendLongTextMessage(
+                  senderPsid,
+                  reply,
+                  PAGE_ACCESS_TOKEN
+                );
+
+                continue;
+              }
+
+              if (
+                attachment.type ===
+                'file'
+              ) {
+                const reply =
+                  await processDocumentFile(
+                    attachment
+                      .payload
+                      .url,
+
+                    apiKeys
+                  );
+
+                await sendLongTextMessage(
+                  senderPsid,
+                  reply,
+                  PAGE_ACCESS_TOKEN
+                );
+
+                continue;
+              }
+
+            } finally {
+              await sendTypingOff(
+                senderPsid,
+                PAGE_ACCESS_TOKEN
+              );
             }
+          }
 
-            /* ==========================
-               AI RESPONSE
-            ========================== */
+          const userMessage =
+            incomingMessage
+              .text
+              ?.trim() ||
+            '';
 
-            await processDirectAI(
+          const quickReplyPayload =
+            incomingMessage
+              .quick_reply
+              ?.payload ||
+            null;
+
+          const finalMessage =
+            quickReplyPayload ||
+            userMessage;
+
+          if (
+            !finalMessage
+          ) {
+            continue;
+          }
+
+          /*
+           * PERIODIC TABLE
+           */
+          if (
+            finalMessage
+              .toLowerCase()
+              .includes(
+                'periodic table'
+              )
+          ) {
+            await sendTextMessage(
+              senderPsid,
+
+              '🧪 Periodic Table of Elements (HD)',
+
+              PAGE_ACCESS_TOKEN
+            );
+
+            await sendMediaAttachment(
+              senderPsid,
+
+              'image',
+
+              'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg',
+
+              PAGE_ACCESS_TOKEN
+            );
+
+            continue;
+          }
+
+          /*
+           * COMMANDS
+           */
+          const handled =
+            await handleCommandAction(
               senderPsid,
 
               finalMessage,
@@ -1379,30 +1303,81 @@ WRITING:
 
               PAGE_ACCESS_TOKEN,
 
+              ADMIN_PSID,
+
               currentDateTimePH
             );
+
+          if (
+            handled
+          ) {
+            continue;
           }
+
+          await sendTypingOn(
+            senderPsid,
+            PAGE_ACCESS_TOKEN
+          );
+
+          /*
+           * URL CONTEXT
+           */
+          if (
+            /https?:\/\/[^\s]+/i
+              .test(
+                finalMessage
+              )
+          ) {
+            try {
+              const reply =
+                await fetchAndSummarizeUrl(
+                  finalMessage,
+                  apiKeys
+                );
+
+              await sendLongTextMessage(
+                senderPsid,
+                reply,
+                PAGE_ACCESS_TOKEN
+              );
+
+            } finally {
+              await sendTypingOff(
+                senderPsid,
+                PAGE_ACCESS_TOKEN
+              );
+            }
+
+            continue;
+          }
+
+          await processDirectAI(
+            senderPsid,
+
+            finalMessage,
+
+            apiKeys,
+
+            PAGE_ACCESS_TOKEN,
+
+            currentDateTimePH
+          );
         }
-      } catch (
-        error
-      ) {
-        console.error(
-          'Processing Error:',
-          error
-        );
       }
 
-      return res
-        .status(200)
-        .send(
-          'EVENT_RECEIVED'
-        );
+    } catch (
+      error
+    ) {
+      console.error(
+        'Processing Error:',
+        error
+      );
     }
 
     return res
-      .status(404)
+      .status(200)
       .send(
-        'Not Found'
+        'EVENT_RECEIVED'
       );
   }
 
@@ -1420,13 +1395,13 @@ WRITING:
 async function callGeminiApiWithFallback(
   payload,
   apiKeys,
-  maxTotalTimeoutMs = 15000
+  maxTotalTimeoutMs = 30000
 ) {
   if (
     !Array.isArray(
       apiKeys
     ) ||
-    apiKeys.length === 0
+    !apiKeys.length
   ) {
     throw new Error(
       'Walang Gemini API Key.'
@@ -1438,6 +1413,39 @@ async function callGeminiApiWithFallback(
       JSON.stringify(
         payload
       )
+    );
+
+  /*
+   * Gemini 3.x thinking.
+   * LOW = mas mabilis para sa Messenger.
+   */
+  requestBody.generationConfig = {
+    ...(
+      requestBody
+        .generationConfig ||
+      {}
+    ),
+
+    thinkingConfig: {
+      ...(
+        requestBody
+          .generationConfig
+          ?.thinkingConfig ||
+        {}
+      ),
+
+      thinkingLevel:
+        'low'
+    }
+  };
+
+  const totalTimeoutMs =
+    Math.max(
+      Number(
+        maxTotalTimeoutMs
+      ) || 0,
+
+      15000
     );
 
   const startTime =
@@ -1459,6 +1467,10 @@ async function callGeminiApiWithFallback(
 
   const attempts = [];
 
+  /*
+   * Subukan lahat ng models
+   * gamit lahat ng API keys.
+   */
   for (
     const modelName of
     GEMINI_MODELS_FALLBACK
@@ -1469,18 +1481,17 @@ async function callGeminiApiWithFallback(
       apiKeys.length;
       offset++
     ) {
-      const apiKey =
-        apiKeys[
-          (
-            firstKeyIndex +
-            offset
-          ) %
-            apiKeys.length
-        ];
-
       attempts.push({
         modelName,
-        apiKey
+
+        apiKey:
+          apiKeys[
+            (
+              firstKeyIndex +
+              offset
+            ) %
+            apiKeys.length
+          ]
       });
     }
   }
@@ -1496,12 +1507,12 @@ async function callGeminiApiWithFallback(
       startTime;
 
     const remaining =
-      maxTotalTimeoutMs -
+      totalTimeoutMs -
       elapsed;
 
     if (
       remaining <
-      750
+      1200
     ) {
       break;
     }
@@ -1515,19 +1526,25 @@ async function callGeminiApiWithFallback(
       ];
 
     const endpoint =
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
-      `${modelName}:generateContent`;
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
     const controller =
       new AbortController();
 
+    /*
+     * Dating 8 seconds.
+     * Ginawang hanggang 18 seconds
+     * para sa mahahabang sagot.
+     */
     const requestTimeout =
       Math.min(
-        8000,
+        18000,
 
         Math.max(
-          1000,
-          remaining - 250
+          3000,
+
+          remaining -
+          750
         )
       );
 
@@ -1540,6 +1557,10 @@ async function callGeminiApiWithFallback(
       );
 
     try {
+      console.log(
+        `🤖 Gemini ${attempt + 1}/${attempts.length} | Model: ${modelName} | Timeout: ${requestTimeout}ms`
+      );
+
       const response =
         await fetch(
           endpoint,
@@ -1571,10 +1592,8 @@ async function callGeminiApiWithFallback(
       try {
         data =
           await response.json();
-      } catch {
-        data =
-          null;
-      }
+
+      } catch (_) {}
 
       const text =
         extractGeminiText(
@@ -1585,12 +1604,15 @@ async function callGeminiApiWithFallback(
         response.ok &&
         text
       ) {
+        console.log(
+          `✅ Gemini Success | Model: ${modelName}`
+        );
+
         return text;
       }
 
       const errorMessage =
-        data?.error
-          ?.message ||
+        data?.error?.message ||
         `API Status ${response.status}`;
 
       lastError =
@@ -1612,24 +1634,31 @@ async function callGeminiApiWithFallback(
           resolve =>
             setTimeout(
               resolve,
-              Math.min(
-                500,
-                150 +
-                  attempt *
-                    50
-              )
+              300
             )
         );
       }
+
     } catch (
       error
     ) {
       lastError =
         error;
 
-      console.error(
-        `[Gemini Fetch Attempt ${attempt + 1}/${attempts.length}] Model: ${modelName} | ${error.message}`
-      );
+      if (
+        error?.name ===
+        'AbortError'
+      ) {
+        console.warn(
+          `⏱️ Gemini timeout | Model: ${modelName} | ${requestTimeout}ms`
+        );
+
+      } else {
+        console.error(
+          `[Gemini Fetch Attempt ${attempt + 1}/${attempts.length}] Model: ${modelName} | ${error.message}`
+        );
+      }
+
     } finally {
       clearTimeout(
         timer
@@ -1640,7 +1669,7 @@ async function callGeminiApiWithFallback(
   throw (
     lastError ||
     new Error(
-      'Abala o unavailable ang lahat ng API keys/models.'
+      'Unavailable ang lahat ng Gemini API keys/models.'
     )
   );
 }
@@ -1662,10 +1691,9 @@ async function handleCommandAction(
       .toLowerCase()
       .trim();
 
-  /* ========================
-     ADMIN
-  ======================== */
-
+  /*
+   * ADMIN
+   */
   if (
     [
       '/stats',
@@ -1690,17 +1718,14 @@ async function handleCommandAction(
       return true;
     }
 
-    const statsMsg =
+    await sendTextMessage(
+      senderPsid,
+
       `📊 AI Status\n\n` +
       `• Active Keys: ${apiKeys.length}\n` +
       `• Current Key Index: ${currentKeyIndex}\n` +
       `• Philippine Time: ${currentDateTimePH}\n` +
-      `• Status: Operational 🟢`;
-
-    await sendTextMessage(
-      senderPsid,
-
-      statsMsg,
+      `• Status: Operational 🟢`,
 
       pageToken
     );
@@ -1708,14 +1733,14 @@ async function handleCommandAction(
     return true;
   }
 
-  /* ========================
-     SEARCH
-  ======================== */
-
+  /*
+   * SEARCH
+   */
   if (
-    lowerText.startsWith(
-      '/search '
-    )
+    lowerText
+      .startsWith(
+        '/search '
+      )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1738,17 +1763,11 @@ async function handleCommandAction(
 
       const reply =
         await getDirectGeminiResponse(
-          `Philippine time: ${currentDateTimePH}
+          `Philippine time: ${currentDateTimePH}\n\n` +
+          `Search Data:\n${results || 'Walang nahanap.'}\n\n` +
+          `Question:\n${query}`,
 
-Search Data:
-${results || 'Walang nahanap.'}
-
-Question:
-${query}`,
-
-          apiKeys,
-
-          senderPsid
+          apiKeys
         );
 
       await sendLongTextMessage(
@@ -1758,6 +1777,7 @@ ${query}`,
 
         pageToken
       );
+
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1768,14 +1788,14 @@ ${query}`,
     return true;
   }
 
-  /* ========================
-     IMAGE GENERATION
-  ======================== */
-
+  /*
+   * IMAGE GENERATION
+   */
   if (
-    lowerText.startsWith(
-      '/imagen '
-    )
+    lowerText
+      .startsWith(
+        '/imagen '
+      )
   ) {
     const prompt =
       input
@@ -1798,14 +1818,14 @@ ${query}`,
     return true;
   }
 
-  /* ========================
-     MATH
-  ======================== */
-
+  /*
+   * MATH
+   */
   if (
-    lowerText.startsWith(
-      '/math '
-    )
+    lowerText
+      .startsWith(
+        '/math '
+      )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1813,7 +1833,7 @@ ${query}`,
     );
 
     try {
-      const mathProblem =
+      const problem =
         input
           .replace(
             /^\/math\s*/i,
@@ -1823,11 +1843,9 @@ ${query}`,
 
       const reply =
         await getDirectGeminiResponse(
-          `Solve this step-by-step: ${mathProblem}`,
+          `Solve this step-by-step: ${problem}`,
 
-          apiKeys,
-
-          senderPsid
+          apiKeys
         );
 
       await sendLongTextMessage(
@@ -1837,6 +1855,7 @@ ${query}`,
 
         pageToken
       );
+
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1847,14 +1866,14 @@ ${query}`,
     return true;
   }
 
-  /* ========================
-     CODE
-  ======================== */
-
+  /*
+   * CODE
+   */
   if (
-    lowerText.startsWith(
-      '/code '
-    )
+    lowerText
+      .startsWith(
+        '/code '
+      )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1862,7 +1881,7 @@ ${query}`,
     );
 
     try {
-      const codeQuery =
+      const task =
         input
           .replace(
             /^\/code\s*/i,
@@ -1872,11 +1891,9 @@ ${query}`,
 
       const reply =
         await getDirectGeminiResponse(
-          `Provide clean and functional code for: ${codeQuery}`,
+          `Provide clean and functional code for: ${task}`,
 
-          apiKeys,
-
-          senderPsid
+          apiKeys
         );
 
       await sendLongTextMessage(
@@ -1886,6 +1903,7 @@ ${query}`,
 
         pageToken
       );
+
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1896,10 +1914,9 @@ ${query}`,
     return true;
   }
 
-  /* ========================
-     HELP
-  ======================== */
-
+  /*
+   * HELP
+   */
   if (
     [
       '/commands',
@@ -1908,18 +1925,17 @@ ${query}`,
       lowerText
     )
   ) {
-    const helpMsg =
-      `📚 JepongDevxyz AI Commands\n\n` +
-      `🔍 /search [topic]\n` +
-      `🎨 /imagen [prompt]\n` +
-      `🧮 /math [problem]\n` +
-      `💻 /code [task]\n` +
-      `🔄 /reset\n` +
-      `📊 /stats (Admin only)`;
-
     await sendTextMessage(
       senderPsid,
-      helpMsg,
+
+      '📚 JepongDevxyz AI Commands\n\n' +
+      '🔍 /search [topic]\n' +
+      '🎨 /imagen [prompt]\n' +
+      '🧮 /math [problem]\n' +
+      '💻 /code [task]\n' +
+      '🔄 /reset\n' +
+      '📊 /stats (Admin only)',
+
       pageToken
     );
 
@@ -1928,14 +1944,14 @@ ${query}`,
 
   return false;
 }
+
 /* =========================================================
    AUDIO
 ========================================================= */
 
 async function processAudioMessage(
   audioUrl,
-  apiKeys,
-  senderPsid
+  apiKeys
 ) {
   try {
     const {
@@ -1948,39 +1964,41 @@ async function processAudioMessage(
       );
 
     const normalizedMime =
-      mimeType.startsWith(
-        'audio/'
-      )
+      mimeType
+        .startsWith(
+          'audio/'
+        )
         ? mimeType
         : 'audio/mpeg';
 
-    const payload = {
-      contents: [
-        {
-          parts: [
-            {
-              text:
-                'Transcribe this audio first, then answer naturally and accurately.'
-            },
-
-            {
-              inline_data: {
-                mime_type:
-                  normalizedMime,
-
-                data
-              }
-            }
-          ]
-        }
-      ]
-    };
-
     return await callGeminiApiWithFallback(
-      payload,
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text:
+                  'Transcribe this audio first, then answer naturally and accurately.'
+              },
+
+              {
+                inline_data: {
+                  mime_type:
+                    normalizedMime,
+
+                  data
+                }
+              }
+            ]
+          }
+        ]
+      },
+
       apiKeys,
-      14000
+
+      25000
     );
+
   } catch (
     error
   ) {
@@ -1989,7 +2007,9 @@ async function processAudioMessage(
       error.message
     );
 
-    return '× Error sa pagproseso ng boses.';
+    return (
+      '× Error sa pagproseso ng boses.'
+    );
   }
 }
 
@@ -1999,8 +2019,7 @@ async function processAudioMessage(
 
 async function processDocumentFile(
   fileUrl,
-  apiKeys,
-  senderPsid
+  apiKeys
 ) {
   try {
     const {
@@ -2015,45 +2034,49 @@ async function processDocumentFile(
     const supported =
       mimeType ===
         'application/pdf' ||
-      mimeType.startsWith(
-        'text/'
-      ) ||
+      mimeType
+        .startsWith(
+          'text/'
+        ) ||
       mimeType ===
         'application/json';
 
     if (
       !supported
     ) {
-      return `× Unsupported file type: ${mimeType}`;
+      return (
+        `× Unsupported file type: ${mimeType}`
+      );
     }
 
-    const payload = {
-      contents: [
-        {
-          parts: [
-            {
-              text:
-                'Analyze and summarize this document clearly and accurately.'
-            },
-
-            {
-              inline_data: {
-                mime_type:
-                  mimeType,
-
-                data
-              }
-            }
-          ]
-        }
-      ]
-    };
-
     return await callGeminiApiWithFallback(
-      payload,
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text:
+                  'Analyze and summarize this document clearly and accurately.'
+              },
+
+              {
+                inline_data: {
+                  mime_type:
+                    mimeType,
+
+                  data
+                }
+              }
+            ]
+          }
+        ]
+      },
+
       apiKeys,
-      16000
+
+      30000
     );
+
   } catch (
     error
   ) {
@@ -2062,7 +2085,9 @@ async function processDocumentFile(
       error.message
     );
 
-    return '× Error sa pagbasa ng file.';
+    return (
+      '× Error sa pagbasa ng file.'
+    );
   }
 }
 
@@ -2072,8 +2097,7 @@ async function processDocumentFile(
 
 async function fetchAndSummarizeUrl(
   textWithUrl,
-  apiKeys,
-  senderPsid
+  apiKeys
 ) {
   try {
     const urls =
@@ -2082,18 +2106,21 @@ async function fetchAndSummarizeUrl(
       );
 
     if (
-      urls.length === 0
+      !urls.length
     ) {
-      return '× Walang valid URL na nakita.';
+      return (
+        '× Walang valid URL na nakita.'
+      );
     }
 
-    const payload = {
-      contents: [
-        {
-          parts: [
-            {
-              text:
-                `Analyze the public URLs below using URL Context.
+    return await callGeminiApiWithFallback(
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text:
+`Analyze the public URLs below using URL Context.
 
 User Message:
 ${textWithUrl}
@@ -2102,23 +2129,23 @@ URLs:
 ${urls.join('\n')}
 
 Give an accurate summary and answer the user's question.`
-            }
-          ]
-        }
-      ],
+              }
+            ]
+          }
+        ],
 
-      tools: [
-        {
-          url_context: {}
-        }
-      ]
-    };
+        tools: [
+          {
+            url_context: {}
+          }
+        ]
+      },
 
-    return await callGeminiApiWithFallback(
-      payload,
       apiKeys,
-      16000
+
+      30000
     );
+
   } catch (
     error
   ) {
@@ -2127,7 +2154,9 @@ Give an accurate summary and answer the user's question.`
       error.message
     );
 
-    return '× Hindi nabasa ang link.';
+    return (
+      '× Hindi nabasa ang link.'
+    );
   }
 }
 
@@ -2151,29 +2180,23 @@ async function generateAndSendImage(
   const seed =
     Math.floor(
       Math.random() *
-        1000000
+      1000000
     );
 
   const imageUrl =
-    `https://image.pollinations.ai/prompt/` +
-    `${encodeURIComponent(
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(
       prompt
-    )}` +
-    `/image.jpg?width=1024&height=1024&nologo=true&seed=${seed}`;
+    )}/image.jpg?width=1024&height=1024&nologo=true&seed=${seed}`;
 
   try {
     await sendMediaAttachment(
       senderPsid,
-
       'image',
-
       imageUrl,
-
       pageToken
     );
-  } catch (
-    error
-  ) {
+
+  } catch (_) {
     await sendTextMessage(
       senderPsid,
 
@@ -2185,35 +2208,33 @@ async function generateAndSendImage(
 }
 
 /* =========================================================
-   DIRECT GEMINI RESPONSE
+   DIRECT GEMINI
 ========================================================= */
 
 async function getDirectGeminiResponse(
   promptText,
-  apiKeys,
-  senderPsid
+  apiKeys
 ) {
   try {
-    const payload = {
-      contents: [
-        {
-          parts: [
-            {
-              text:
-                `${promptText}
-
-Use correct facts, spelling and grammar.`
-            }
-          ]
-        }
-      ]
-    };
-
     return await callGeminiApiWithFallback(
-      payload,
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text:
+                  `${promptText}\n\nUse correct facts, spelling and grammar.`
+              }
+            ]
+          }
+        ]
+      },
+
       apiKeys,
-      9000
+
+      25000
     );
+
   } catch (
     error
   ) {
@@ -2222,7 +2243,9 @@ Use correct facts, spelling and grammar.`
       error.message
     );
 
-    return 'Pasensya na, may kaunting delay.';
+    return (
+      'Pasensya na, may kaunting delay.'
+    );
   }
 }
 
@@ -2232,8 +2255,7 @@ Use correct facts, spelling and grammar.`
 
 async function analyzeHomeworkWithGemini(
   imageUrl,
-  apiKeys,
-  senderPsid
+  apiKeys
 ) {
   try {
     const {
@@ -2246,39 +2268,41 @@ async function analyzeHomeworkWithGemini(
       );
 
     const normalizedMime =
-      mimeType.startsWith(
-        'image/'
-      )
+      mimeType
+        .startsWith(
+          'image/'
+        )
         ? mimeType
         : 'image/jpeg';
 
-    const payload = {
-      contents: [
-        {
-          parts: [
-            {
-              text:
-                'Analyze this image carefully. If it contains homework, explain the answer step-by-step.'
-            },
-
-            {
-              inline_data: {
-                mime_type:
-                  normalizedMime,
-
-                data
-              }
-            }
-          ]
-        }
-      ]
-    };
-
     return await callGeminiApiWithFallback(
-      payload,
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text:
+                  'Analyze this image carefully. If it contains homework, explain the answer step-by-step.'
+              },
+
+              {
+                inline_data: {
+                  mime_type:
+                    normalizedMime,
+
+                  data
+                }
+              }
+            ]
+          }
+        ]
+      },
+
       apiKeys,
-      14000
+
+      25000
     );
+
   } catch (
     error
   ) {
@@ -2287,7 +2311,9 @@ async function analyzeHomeworkWithGemini(
       error.message
     );
 
-    return 'Error sa pag-analyze ng larawan.';
+    return (
+      'Error sa pag-analyze ng larawan.'
+    );
   }
 }
 
@@ -2307,7 +2333,8 @@ async function processDirectAI(
       'Boss';
 
     const lowerMsg =
-      userMessage.toLowerCase();
+      userMessage
+        .toLowerCase();
 
     if (
       [
@@ -2317,19 +2344,21 @@ async function processDirectAI(
         'ibalik sa dati',
         'normal mode'
       ].some(
-        command =>
+        cmd =>
           lowerMsg.includes(
-            command
+            cmd
           )
       )
     ) {
-      userPersonasMap.delete(
-        senderPsid
-      );
+      userPersonasMap
+        .delete(
+          senderPsid
+        );
 
-      userConversationsMap.delete(
-        senderPsid
-      );
+      userConversationsMap
+        .delete(
+          senderPsid
+        );
 
       await sendTextMessage(
         senderPsid,
@@ -2348,15 +2377,17 @@ async function processDirectAI(
     }
 
     let currentPersona =
-      userPersonasMap.get(
-        senderPsid
-      ) ||
+      userPersonasMap
+        .get(
+          senderPsid
+        ) ||
       null;
 
     const isPersonaTrigger =
-      /umakting ka|maging|gayahin mo|ikaw si|pretend/i.test(
-        userMessage
-      );
+      /umakting ka|maging|gayahin mo|ikaw si|pretend/i
+        .test(
+          userMessage
+        );
 
     if (
       isPersonaTrigger &&
@@ -2365,25 +2396,28 @@ async function processDirectAI(
       currentPersona =
         userMessage;
 
-      userPersonasMap.set(
-        senderPsid,
-        currentPersona
-      );
+      userPersonasMap
+        .set(
+          senderPsid,
+          currentPersona
+        );
     }
 
     let history =
-      userConversationsMap.get(
-        senderPsid
-      ) ||
+      userConversationsMap
+        .get(
+          senderPsid
+        ) ||
       [];
 
     let messageToSend =
       userMessage;
 
     const isSearchQuery =
-      /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i.test(
-        userMessage
-      );
+      /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i
+        .test(
+          userMessage
+        );
 
     if (
       isSearchQuery
@@ -2398,9 +2432,9 @@ async function processDirectAI(
           searchData
         ) {
           messageToSend =
-            `${userMessage}\n\n` +
-            `[Live Real-Time Web Data]:\n${searchData}`;
+            `${userMessage}\n\n[Live Real-Time Web Data]:\n${searchData}`;
         }
+
       } catch (
         error
       ) {
@@ -2428,8 +2462,8 @@ async function processDirectAI(
         -MAX_HISTORY_ITEMS
       );
 
-    let systemInstructionText = `
-You are JepongDevxyz AI chatting with ${firstName} on Facebook Messenger.
+    let systemInstructionText =
+`You are JepongDevxyz AI chatting with ${firstName} on Facebook Messenger.
 
 CURRENT PHILIPPINE DATE & TIME:
 ${currentDateTimePH}
@@ -2443,8 +2477,7 @@ RULES:
 - Use correct spelling and grammar.
 - Give accurate and useful answers.
 - Use supplied Live Real-Time Web Data when available.
-- Never invent live/current facts.
-`;
+- Never invent live/current facts.`;
 
     if (
       currentPersona
@@ -2453,30 +2486,34 @@ RULES:
         `\nCurrent requested persona: "${currentPersona}"`;
     }
 
-    const payload = {
-      system_instruction: {
-        parts: [
-          {
-            text:
-              systemInstructionText
-          }
-        ]
-      },
-
-      contents:
-        history
-    };
-
     const aiReply =
       await callGeminiApiWithFallback(
-        payload,
+        {
+          system_instruction: {
+            parts: [
+              {
+                text:
+                  systemInstructionText
+              }
+            ]
+          },
+
+          contents:
+            history
+        },
+
         apiKeys,
-        10000
+
+        30000
       );
 
+    /*
+     * Itago sa memory ang original user text,
+     * hindi yung injected web data.
+     */
     history[
       history.length -
-        1
+      1
     ] = {
       role:
         'user',
@@ -2529,6 +2566,7 @@ RULES:
       senderPsid,
       pageToken
     );
+
   } catch (
     error
   ) {
@@ -2553,7 +2591,7 @@ RULES:
 }
 
 /* =========================================================
-   META SEND API
+   META MESSENGER SEND API
 ========================================================= */
 
 async function callMessengerSendApi(
@@ -2596,21 +2634,15 @@ async function callMessengerSendApi(
   try {
     data =
       await response.json();
-  } catch {
-    data =
-      null;
-  }
+
+  } catch (_) {}
 
   if (
     !response.ok
   ) {
-    const message =
-      data?.error
-        ?.message ||
-      `Meta HTTP ${response.status}`;
-
     throw new Error(
-      message
+      data?.error?.message ||
+      `Meta HTTP ${response.status}`
     );
   }
 
@@ -2618,7 +2650,7 @@ async function callMessengerSendApi(
 }
 
 /* =========================================================
-   TYPING ON
+   TYPING
 ========================================================= */
 
 async function sendTypingOn(
@@ -2639,6 +2671,7 @@ async function sendTypingOn(
 
       pageToken
     );
+
   } catch (
     error
   ) {
@@ -2648,10 +2681,6 @@ async function sendTypingOn(
     );
   }
 }
-
-/* =========================================================
-   TYPING OFF
-========================================================= */
 
 async function sendTypingOff(
   senderPsid,
@@ -2671,6 +2700,7 @@ async function sendTypingOff(
 
       pageToken
     );
+
   } catch (
     error
   ) {
@@ -2715,6 +2745,7 @@ async function sendMediaAttachment(
 
       pageToken
     );
+
   } catch (
     error
   ) {
@@ -2768,12 +2799,14 @@ function cleanMessengerFormatting(
 
 function splitLongMessage(
   text,
-  maxLength = 1800
+  maxLength =
+    MESSENGER_CHUNK_SIZE
 ) {
   const source =
     String(
       text ?? ''
-    ).trim();
+    )
+      .trim();
 
   if (
     !source
@@ -2799,42 +2832,51 @@ function splitLongMessage(
     remaining.length >
     maxLength
   ) {
+    /*
+     * Unahin:
+     * 1. paragraph
+     * 2. newline
+     * 3. sentence
+     * 4. word
+     */
     let cut =
-      remaining.lastIndexOf(
-        '\n\n',
-        maxLength
-      );
+      remaining
+        .lastIndexOf(
+          '\n\n',
+          maxLength
+        );
 
     if (
       cut <
       Math.floor(
         maxLength *
-          0.5
+        0.5
       )
     ) {
       cut =
-        remaining.lastIndexOf(
-          '\n',
-          maxLength
-        );
+        remaining
+          .lastIndexOf(
+            '\n',
+            maxLength
+          );
     }
 
     if (
       cut <
       Math.floor(
         maxLength *
-          0.5
+        0.5
       )
     ) {
       cut =
-        remaining.lastIndexOf(
-          '. ',
-          maxLength
-        );
+        remaining
+          .lastIndexOf(
+            '. ',
+            maxLength
+          );
 
       if (
-        cut >
-        0
+        cut > 0
       ) {
         cut += 1;
       }
@@ -2844,14 +2886,15 @@ function splitLongMessage(
       cut <
       Math.floor(
         maxLength *
-          0.5
+        0.5
       )
     ) {
       cut =
-        remaining.lastIndexOf(
-          ' ',
-          maxLength
-        );
+        remaining
+          .lastIndexOf(
+            ' ',
+            maxLength
+          );
     }
 
     if (
@@ -2919,7 +2962,7 @@ async function sendLongTextMessage(
   const chunks =
     splitLongMessage(
       cleanText,
-      1800
+      MESSENGER_CHUNK_SIZE
     );
 
   const totalParts =
@@ -2940,14 +2983,19 @@ async function sendLongTextMessage(
       senderPsid,
 
       prefix +
-        chunks[index],
+      chunks[index],
 
       pageToken
     );
 
+    /*
+     * Small delay para maayos
+     * ang order ng bubbles.
+     */
     if (
       index <
-      totalParts - 1
+      totalParts -
+      1
     ) {
       await new Promise(
         resolve =>
@@ -2981,13 +3029,14 @@ async function sendTextMessage(
           text:
             String(
               responseText ??
-                ''
+              ''
             )
         }
       },
 
       pageToken
     );
+
   } catch (
     error
   ) {
