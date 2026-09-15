@@ -4,12 +4,15 @@ const GEMINI_MODELS_FALLBACK = [
   'gemini-flash-latest'
 ];
 
-const FB_GRAPH_VERSION = process.env.FB_GRAPH_VERSION || 'v26.0';
+const FB_GRAPH_VERSION =
+  process.env.FB_GRAPH_VERSION || 'v26.0';
+
 const MAX_HISTORY_ITEMS = 10;
 const MAX_CONVERSATIONS = 500;
 const MAX_INLINE_BYTES = 18 * 1024 * 1024;
 const MAX_WEB_MESSAGE_CHARS = 12000;
 const MESSENGER_CHUNK_SIZE = 1800;
+const MESSENGER_SEPARATOR = '━━━━━━━━━━━━━━━━━━';
 
 let currentKeyIndex = 0;
 
@@ -53,27 +56,19 @@ function setLimitedConversation(
     map.delete(key);
   }
 
-  map.set(
-    key,
-    value
-  );
+  map.set(key, value);
 
   while (
     map.size >
     MAX_CONVERSATIONS
   ) {
     map.delete(
-      map
-        .keys()
-        .next()
-        .value
+      map.keys().next().value
     );
   }
 }
 
-function stripDataUrlPrefix(
-  value
-) {
+function stripDataUrlPrefix(value) {
   if (
     typeof value !==
     'string'
@@ -85,29 +80,21 @@ function stripDataUrlPrefix(
     value.indexOf(',');
 
   return (
-    value.startsWith(
-      'data:'
-    ) &&
+    value.startsWith('data:') &&
     comma !== -1
   )
-    ? value.slice(
-        comma + 1
-      )
+    ? value.slice(comma + 1)
     : value;
 }
 
-function extractGeminiText(
-  data
-) {
+function extractGeminiText(data) {
   const parts =
     data
       ?.candidates?.[0]
       ?.content?.parts;
 
   if (
-    !Array.isArray(
-      parts
-    )
+    !Array.isArray(parts)
   ) {
     return '';
   }
@@ -120,17 +107,12 @@ function extractGeminiText(
         p.text.trim() &&
         !p.thought
     )
-    .map(
-      p =>
-        p.text
-    )
+    .map(p => p.text)
     .join('\n')
     .trim();
 }
 
-function extractUrls(
-  text
-) {
+function extractUrls(text) {
   if (
     typeof text !==
     'string'
@@ -144,18 +126,14 @@ function extractUrls(
         text.match(
           /https?:\/\/[^\s<>()]+/gi
         ) || []
-      ).map(
-        url =>
-          url.replace(
-            /[.,!?;:)]+$/,
-            ''
-          )
+      ).map(url =>
+        url.replace(
+          /[.,!?;:)]+$/,
+          ''
+        )
       )
     )
-  ].slice(
-    0,
-    20
-  );
+  ].slice(0, 20);
 }
 
 async function fetchBinaryAsBase64(
@@ -167,24 +145,18 @@ async function fetchBinaryAsBase64(
 
   const timer =
     setTimeout(
-      () =>
-        controller.abort(),
+      () => controller.abort(),
       10000
     );
 
   try {
     const response =
-      await fetch(
-        url,
-        {
-          signal:
-            controller.signal
-        }
-      );
+      await fetch(url, {
+        signal:
+          controller.signal
+      });
 
-    if (
-      !response.ok
-    ) {
+    if (!response.ok) {
       throw new Error(
         `Download failed: HTTP ${response.status}`
       );
@@ -234,80 +206,50 @@ async function fetchBinaryAsBase64(
 
     return {
       data:
-        buffer.toString(
-          'base64'
-        ),
-
+        buffer.toString('base64'),
       mimeType
     };
-
   } finally {
-    clearTimeout(
-      timer
-    );
+    clearTimeout(timer);
   }
 }
 
 function getPhilippineDateTime() {
-  return new Date()
-    .toLocaleString(
-      'en-US',
-      {
-        timeZone:
-          'Asia/Manila',
-
-        weekday:
-          'long',
-
-        year:
-          'numeric',
-
-        month:
-          'long',
-
-        day:
-          'numeric',
-
-        hour:
-          'numeric',
-
-        minute:
-          '2-digit',
-
-        hour12:
-          true
-      }
-    );
+  return new Date().toLocaleString(
+    'en-US',
+    {
+      timeZone: 'Asia/Manila',
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }
+  );
 }
 
 /* =========================================================
    WEB SEARCH
 ========================================================= */
 
-async function performFreeWebSearch(
-  query
-) {
+async function performFreeWebSearch(query) {
   const cleanQuery =
-    String(
-      query || ''
-    )
+    String(query || '')
       .replace(
         /^(search|mag-search|hanapin|ano ang balita sa|updates sa)\s+/i,
         ''
       )
       .trim();
 
-  if (
-    !cleanQuery
-  ) {
+  if (!cleanQuery) {
     return null;
   }
 
   const liveIntent =
     /(latest|update|balita|ngayon|today|current|presyo|price|score|weather|panahon|forecast)/i
-      .test(
-        cleanQuery
-      );
+      .test(cleanQuery);
 
   const searchQuery =
     liveIntent
@@ -319,9 +261,7 @@ async function performFreeWebSearch(
    */
   if (
     /weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast/i
-      .test(
-        cleanQuery
-      )
+      .test(cleanQuery)
   ) {
     try {
       const place =
@@ -330,10 +270,7 @@ async function performFreeWebSearch(
             /\b(weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast|ngayon|today|current|kumusta)\b/gi,
             ' '
           )
-          .replace(
-            /\s+/g,
-            ' '
-          )
+          .replace(/\s+/g, ' ')
           .trim()
           .replace(
             /^(sa|in|at)\s+/i,
@@ -341,9 +278,7 @@ async function performFreeWebSearch(
           )
           .trim();
 
-      if (
-        place
-      ) {
+      if (place) {
         const geoRes =
           await fetch(
             `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
@@ -351,43 +286,32 @@ async function performFreeWebSearch(
             )}&count=1&language=en&format=json`
           );
 
-        if (
-          geoRes.ok
-        ) {
+        if (geoRes.ok) {
           const geoData =
             await geoRes.json();
 
-          if (
-            geoData
-              .results?.[0]
-          ) {
+          if (geoData.results?.[0]) {
             const {
               latitude,
               longitude,
               name,
               admin1,
               country
-            } =
-              geoData
-                .results[0];
+            } = geoData.results[0];
 
             const weatherRes =
               await fetch(
                 `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`
               );
 
-            if (
-              weatherRes.ok
-            ) {
+            if (weatherRes.ok) {
               const weatherData =
                 await weatherRes.json();
 
               const c =
                 weatherData.current;
 
-              if (
-                c
-              ) {
+              if (c) {
                 return (
                   `Live Weather Report (${name}, ${admin1 || ''}, ${country})\n` +
                   `Temperature: ${c.temperature_2m}°C\n` +
@@ -401,10 +325,7 @@ async function performFreeWebSearch(
           }
         }
       }
-
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         '[Weather API Error]',
         error.message
@@ -416,19 +337,15 @@ async function performFreeWebSearch(
    * TAVILY
    */
   const tavilyKey =
-    process.env
-      .TAVILY_API_KEY;
+    process.env.TAVILY_API_KEY;
 
-  if (
-    tavilyKey
-  ) {
+  if (tavilyKey) {
     const controller =
       new AbortController();
 
     const timer =
       setTimeout(
-        () =>
-          controller.abort(),
+        () => controller.abort(),
         5000
       );
 
@@ -437,74 +354,50 @@ async function performFreeWebSearch(
         await fetch(
           'https://api.tavily.com/search',
           {
-            method:
-              'POST',
-
+            method: 'POST',
             headers: {
               'Content-Type':
                 'application/json',
-
               Authorization:
                 `Bearer ${tavilyKey}`
             },
-
             body:
               JSON.stringify({
-                query:
-                  searchQuery,
-
-                search_depth:
-                  'basic',
-
-                max_results:
-                  4
+                query: searchQuery,
+                search_depth: 'basic',
+                max_results: 4
               }),
-
             signal:
               controller.signal
           }
         );
 
-      if (
-        response.ok
-      ) {
+      if (response.ok) {
         const data =
           await response.json();
 
         if (
-          Array.isArray(
-            data.results
-          ) &&
+          Array.isArray(data.results) &&
           data.results.length
         ) {
-          return data
-            .results
-            .slice(
-              0,
-              4
-            )
+          return data.results
+            .slice(0, 4)
             .map(
               r =>
-                `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
+                `• ${r.title || 'Result'}: ${
+                  r.content || r.url || ''
+                }`
             )
-            .join(
-              '\n\n'
-            );
+            .join('\n\n');
         }
       }
-
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         '[Tavily Search Failed]',
         error.message
       );
-
     } finally {
-      clearTimeout(
-        timer
-      );
+      clearTimeout(timer);
     }
   }
 
@@ -517,17 +410,13 @@ async function performFreeWebSearch(
     'https://baresearch.org'
   ];
 
-  for (
-    const instance of
-    instances
-  ) {
+  for (const instance of instances) {
     const controller =
       new AbortController();
 
     const timer =
       setTimeout(
-        () =>
-          controller.abort(),
+        () => controller.abort(),
         3500
       );
 
@@ -538,63 +427,43 @@ async function performFreeWebSearch(
         )}&format=json&language=tl,en`;
 
       const response =
-        await fetch(
-          searchUrl,
-          {
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0)'
-            },
+        await fetch(searchUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0)'
+          },
+          signal:
+            controller.signal
+        });
 
-            signal:
-              controller.signal
-          }
-        );
-
-      if (
-        response.ok
-      ) {
+      if (response.ok) {
         const data =
           await response.json();
 
         if (
-          Array.isArray(
-            data.results
-          ) &&
+          Array.isArray(data.results) &&
           data.results.length
         ) {
           const results =
             data.results
-              .slice(
-                0,
-                4
-              )
+              .slice(0, 4)
               .map(
                 r =>
-                  `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
+                  `• ${r.title || 'Result'}: ${
+                    r.content || r.url || ''
+                  }`
               )
-              .filter(
-                Boolean
-              );
+              .filter(Boolean);
 
-          if (
-            results.length
-          ) {
-            return results
-              .join(
-                '\n\n'
-              );
+          if (results.length) {
+            return results.join('\n\n');
           }
         }
       }
-
     } catch (_) {
       // Try next instance.
-
     } finally {
-      clearTimeout(
-        timer
-      );
+      clearTimeout(timer);
     }
   }
 
@@ -615,19 +484,14 @@ async function performFreeWebSearch(
         }
       );
 
-    if (
-      wikiRes.ok
-    ) {
+    if (wikiRes.ok) {
       const data =
         await wikiRes.json();
 
-      if (
-        data.extract
-      ) {
+      if (data.extract) {
         return data.extract;
       }
     }
-
   } catch (_) {}
 
   return null;
@@ -658,16 +522,13 @@ export default async function handler(
   res
 ) {
   const VERIFY_TOKEN =
-    process.env
-      .VERIFY_TOKEN;
+    process.env.VERIFY_TOKEN;
 
   const PAGE_ACCESS_TOKEN =
-    process.env
-      .PAGE_ACCESS_TOKEN;
+    process.env.PAGE_ACCESS_TOKEN;
 
   const ADMIN_PSID =
-    process.env
-      .ADMIN_PSID;
+    process.env.ADMIN_PSID;
 
   const apiKeys =
     getApiKeysList();
@@ -679,37 +540,27 @@ export default async function handler(
    * WEB CHAT
    */
   if (
-    req.method ===
-      'POST' &&
-    req.body
-      ?.isWebChat
+    req.method === 'POST' &&
+    req.body?.isWebChat
   ) {
     const {
       message,
       sessionId,
       attachments
-    } =
-      req.body;
+    } = req.body;
 
     const sessionKey =
-      normalizeWebSessionId(
-        sessionId
-      );
+      normalizeWebSessionId(sessionId);
 
-    if (
-      !apiKeys.length
-    ) {
-      return res
-        .status(500)
-        .json({
-          error:
-            'AI service is not configured.'
-        });
+    if (!apiKeys.length) {
+      return res.status(500).json({
+        error:
+          'AI service is not configured.'
+      });
     }
 
     const cleanMessage =
-      typeof message ===
-      'string'
+      typeof message === 'string'
         ? message
             .trim()
             .slice(
@@ -725,25 +576,19 @@ export default async function handler(
         '/refresh',
         'reset'
       ].includes(
-        cleanMessage
-          .toLowerCase()
+        cleanMessage.toLowerCase()
       )
     ) {
-      if (
-        sessionKey
-      ) {
-        webConversationsMap
-          .delete(
-            sessionKey
-          );
+      if (sessionKey) {
+        webConversationsMap.delete(
+          sessionKey
+        );
       }
 
-      return res
-        .status(200)
-        .json({
-          reply:
-            '✓ Naka-reset na ang memorya. Paano kita maitutulungan ngayon, Boss?'
-        });
+      return res.status(200).json({
+        reply:
+          '✓ Naka-reset na ang memorya. Paano kita maitutulungan ngayon?'
+      });
     }
 
     const systemInstructionText =
@@ -767,11 +612,9 @@ WRITING:
     let history =
       sessionKey
         ? (
-            webConversationsMap
-              .get(
-                sessionKey
-              ) ||
-            []
+            webConversationsMap.get(
+              sessionKey
+            ) || []
           )
         : [];
 
@@ -779,13 +622,8 @@ WRITING:
 
     for (
       const item of
-      Array.isArray(
-        attachments
-      )
-        ? attachments.slice(
-            0,
-            4
-          )
+      Array.isArray(attachments)
+        ? attachments.slice(0, 4)
         : []
     ) {
       const rawBase64 =
@@ -796,8 +634,7 @@ WRITING:
       const mimeType =
         typeof item?.mimeType ===
         'string'
-          ? item
-              .mimeType
+          ? item.mimeType
               .trim()
               .toLowerCase()
           : '';
@@ -813,36 +650,27 @@ WRITING:
         rawBase64.length >
         Math.ceil(
           (
-            MAX_INLINE_BYTES *
-            4
-          ) /
-          3
-        ) +
-        16
+            MAX_INLINE_BYTES * 4
+          ) / 3
+        ) + 16
       ) {
         continue;
       }
 
       userParts.push({
         inline_data: {
-          mime_type:
-            mimeType,
-
-          data:
-            rawBase64
+          mime_type: mimeType,
+          data: rawBase64
         }
       });
     }
 
     let finalPrompt =
-      cleanMessage ||
-      'Kumusta!';
+      cleanMessage || 'Kumusta!';
 
     if (
       /(balita|sino si|kailan|latest|update|presyo|weather|panahon|search|score|oras|petsa)/i
-        .test(
-          finalPrompt
-        )
+        .test(finalPrompt)
     ) {
       try {
         const results =
@@ -850,16 +678,11 @@ WRITING:
             finalPrompt
           );
 
-        if (
-          results
-        ) {
+        if (results) {
           finalPrompt +=
             `\n\n[Live Real-Time Web Data]:\n${results}`;
         }
-
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.warn(
           'Web Search Error:',
           error.message
@@ -868,24 +691,17 @@ WRITING:
     }
 
     userParts.push({
-      text:
-        finalPrompt
+      text: finalPrompt
     });
 
     const requestHistory =
       [
         ...history,
-
         {
-          role:
-            'user',
-
-          parts:
-            userParts
+          role: 'user',
+          parts: userParts
         }
-      ].slice(
-        -MAX_HISTORY_ITEMS
-      );
+      ].slice(-MAX_HISTORY_ITEMS);
 
     try {
       const reply =
@@ -899,20 +715,14 @@ WRITING:
                 }
               ]
             },
-
-            contents:
-              requestHistory
+            contents: requestHistory
           },
-
           apiKeys,
-
           35000
         );
 
       history.push({
-        role:
-          'user',
-
+        role: 'user',
         parts: [
           {
             text:
@@ -923,21 +733,16 @@ WRITING:
       });
 
       history.push({
-        role:
-          'model',
-
+        role: 'model',
         parts: [
           {
-            text:
-              reply
+            text: reply
           }
         ]
       });
 
       history =
-        history.slice(
-          -MAX_HISTORY_ITEMS
-        );
+        history.slice(-MAX_HISTORY_ITEMS);
 
       setLimitedConversation(
         webConversationsMap,
@@ -945,102 +750,71 @@ WRITING:
         history
       );
 
-      return res
-        .status(200)
-        .json({
-          reply
-        });
-
-    } catch (
-      error
-    ) {
+      return res.status(200).json({
+        reply
+      });
+    } catch (error) {
       console.error(
         'Web Chat Error:',
         error
       );
 
-      return res
-        .status(500)
-        .json({
-          error:
-            'Medyo busy ang server, paki-ulit.'
-        });
+      return res.status(500).json({
+        error:
+          'Medyo busy ang server, paki-ulit.'
+      });
     }
   }
 
   /*
    * FACEBOOK VERIFICATION
    */
-  if (
-    req.method ===
-    'GET'
-  ) {
+  if (req.method === 'GET') {
     const mode =
-      req.query
-        ?.['hub.mode'];
+      req.query?.['hub.mode'];
 
     const token =
-      req.query
-        ?.['hub.verify_token'];
+      req.query?.['hub.verify_token'];
 
     const challenge =
-      req.query
-        ?.['hub.challenge'];
+      req.query?.['hub.challenge'];
 
     if (
       VERIFY_TOKEN &&
-      mode ===
-        'subscribe' &&
-      token ===
-        VERIFY_TOKEN
+      mode === 'subscribe' &&
+      token === VERIFY_TOKEN
     ) {
-      return res
-        .status(200)
-        .send(
-          challenge
-        );
+      return res.status(200).send(
+        challenge
+      );
     }
 
-    return res
-      .status(403)
-      .send(
-        'Forbidden'
-      );
+    return res.status(403).send(
+      'Forbidden'
+    );
   }
 
   /*
    * FACEBOOK MESSENGER WEBHOOK
    */
-  if (
-    req.method ===
-    'POST'
-  ) {
+  if (req.method === 'POST') {
     const body =
       req.body;
 
-    if (
-      body?.object !==
-      'page'
-    ) {
-      return res
-        .status(404)
-        .send(
-          'Not Found'
-        );
+    if (body?.object !== 'page') {
+      return res.status(404).send(
+        'Not Found'
+      );
     }
 
-    if (
-      !PAGE_ACCESS_TOKEN
-    ) {
+    if (!PAGE_ACCESS_TOKEN) {
       console.error(
         'Missing PAGE_ACCESS_TOKEN.'
       );
 
-      return res
-        .status(500)
-        .send(
-          'Messenger is not configured'
-        );
+      return res.status(500).send(
+        'Messenger is not configured'
+      );
     }
 
     try {
@@ -1053,81 +827,60 @@ WRITING:
           entry.messaging || []
         ) {
           const senderPsid =
-            webhookEvent
-              .sender?.id ||
+            webhookEvent.sender?.id ||
             null;
 
-          /*
-           * ADMIN PSID DEBUG
-           */
           console.log(
             '📌 SENDER PSID:',
             senderPsid
           );
 
-          if (
-            !senderPsid
-          ) {
+          if (!senderPsid) {
             continue;
           }
 
           const messageId =
-            webhookEvent
-              .message?.mid ||
+            webhookEvent.message?.mid ||
             null;
 
-          if (
-            messageId
-          ) {
+          if (messageId) {
             if (
-              processedMessageIds
-                .has(
-                  messageId
-                )
+              processedMessageIds.has(
+                messageId
+              )
             ) {
               continue;
             }
 
-            processedMessageIds
-              .add(
-                messageId
-              );
+            processedMessageIds.add(
+              messageId
+            );
 
             const cleanupTimer =
               setTimeout(
                 () =>
-                  processedMessageIds
-                    .delete(
-                      messageId
-                    ),
+                  processedMessageIds.delete(
+                    messageId
+                  ),
                 300000
               );
 
-            cleanupTimer
-              .unref?.();
+            cleanupTimer.unref?.();
           }
 
           /*
            * POSTBACK
            */
           if (
-            webhookEvent
-              .postback
+            webhookEvent.postback
               ?.payload
           ) {
             await handleCommandAction(
               senderPsid,
-
-              webhookEvent
-                .postback
-                .payload,
-
+              webhookEvent.postback.payload,
               apiKeys,
-
               PAGE_ACCESS_TOKEN,
-
               ADMIN_PSID,
-
               currentDateTimePH
             );
 
@@ -1135,13 +888,11 @@ WRITING:
           }
 
           const incomingMessage =
-            webhookEvent
-              .message;
+            webhookEvent.message;
 
           if (
             !incomingMessage ||
-            incomingMessage
-              .is_echo
+            incomingMessage.is_echo
           ) {
             continue;
           }
@@ -1154,8 +905,7 @@ WRITING:
               .attachments?.[0];
 
           if (
-            attachment
-              ?.payload?.url
+            attachment?.payload?.url
           ) {
             await sendTypingOn(
               senderPsid,
@@ -1169,10 +919,7 @@ WRITING:
               ) {
                 const reply =
                   await processAudioMessage(
-                    attachment
-                      .payload
-                      .url,
-
+                    attachment.payload.url,
                     apiKeys
                   );
 
@@ -1191,10 +938,7 @@ WRITING:
               ) {
                 const reply =
                   await analyzeHomeworkWithGemini(
-                    attachment
-                      .payload
-                      .url,
-
+                    attachment.payload.url,
                     apiKeys
                   );
 
@@ -1213,10 +957,7 @@ WRITING:
               ) {
                 const reply =
                   await processDocumentFile(
-                    attachment
-                      .payload
-                      .url,
-
+                    attachment.payload.url,
                     apiKeys
                   );
 
@@ -1228,7 +969,6 @@ WRITING:
 
                 continue;
               }
-
             } finally {
               await sendTypingOff(
                 senderPsid,
@@ -1238,24 +978,19 @@ WRITING:
           }
 
           const userMessage =
-            incomingMessage
-              .text
-              ?.trim() ||
+            incomingMessage.text?.trim() ||
             '';
 
           const quickReplyPayload =
             incomingMessage
-              .quick_reply
-              ?.payload ||
+              .quick_reply?.payload ||
             null;
 
           const finalMessage =
             quickReplyPayload ||
             userMessage;
 
-          if (
-            !finalMessage
-          ) {
+          if (!finalMessage) {
             continue;
           }
 
@@ -1271,19 +1006,14 @@ WRITING:
           ) {
             await sendTextMessage(
               senderPsid,
-
               '🧪 Periodic Table of Elements (HD)',
-
               PAGE_ACCESS_TOKEN
             );
 
             await sendMediaAttachment(
               senderPsid,
-
               'image',
-
               'https://upload.wikimedia.org/wikipedia/commons/b/b3/Simple_Periodic_Table_Chart-en.svg',
-
               PAGE_ACCESS_TOKEN
             );
 
@@ -1296,21 +1026,14 @@ WRITING:
           const handled =
             await handleCommandAction(
               senderPsid,
-
               finalMessage,
-
               apiKeys,
-
               PAGE_ACCESS_TOKEN,
-
               ADMIN_PSID,
-
               currentDateTimePH
             );
 
-          if (
-            handled
-          ) {
+          if (handled) {
             continue;
           }
 
@@ -1323,10 +1046,9 @@ WRITING:
            * URL CONTEXT
            */
           if (
-            /https?:\/\/[^\s]+/i
-              .test(
-                finalMessage
-              )
+            /https?:\/\/[^\s]+/i.test(
+              finalMessage
+            )
           ) {
             try {
               const reply =
@@ -1340,7 +1062,6 @@ WRITING:
                 reply,
                 PAGE_ACCESS_TOKEN
               );
-
             } finally {
               await sendTypingOff(
                 senderPsid,
@@ -1353,39 +1074,28 @@ WRITING:
 
           await processDirectAI(
             senderPsid,
-
             finalMessage,
-
             apiKeys,
-
             PAGE_ACCESS_TOKEN,
-
             currentDateTimePH
           );
         }
       }
-
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
         'Processing Error:',
         error
       );
     }
 
-    return res
-      .status(200)
-      .send(
-        'EVENT_RECEIVED'
-      );
+    return res.status(200).send(
+      'EVENT_RECEIVED'
+    );
   }
 
-  return res
-    .status(405)
-    .send(
-      'Method Not Allowed'
-    );
+  return res.status(405).send(
+    'Method Not Allowed'
+  );
 }
 
 /* =========================================================
@@ -1398,9 +1108,7 @@ async function callGeminiApiWithFallback(
   maxTotalTimeoutMs = 30000
 ) {
   if (
-    !Array.isArray(
-      apiKeys
-    ) ||
+    !Array.isArray(apiKeys) ||
     !apiKeys.length
   ) {
     throw new Error(
@@ -1410,49 +1118,34 @@ async function callGeminiApiWithFallback(
 
   const requestBody =
     JSON.parse(
-      JSON.stringify(
-        payload
-      )
+      JSON.stringify(payload)
     );
 
-  /*
-   * Gemini 3.x thinking.
-   * LOW = mas mabilis para sa Messenger.
-   */
   requestBody.generationConfig = {
     ...(
-      requestBody
-        .generationConfig ||
+      requestBody.generationConfig ||
       {}
     ),
-
     thinkingConfig: {
       ...(
-        requestBody
-          .generationConfig
+        requestBody.generationConfig
           ?.thinkingConfig ||
         {}
       ),
-
-      thinkingLevel:
-        'low'
+      thinkingLevel: 'low'
     }
   };
 
   const totalTimeoutMs =
     Math.max(
-      Number(
-        maxTotalTimeoutMs
-      ) || 0,
-
+      Number(maxTotalTimeoutMs) || 0,
       15000
     );
 
   const startTime =
     Date.now();
 
-  let lastError =
-    null;
+  let lastError = null;
 
   const firstKeyIndex =
     currentKeyIndex %
@@ -1460,37 +1153,28 @@ async function callGeminiApiWithFallback(
 
   currentKeyIndex =
     (
-      currentKeyIndex +
-      1
-    ) %
-    apiKeys.length;
+      currentKeyIndex + 1
+    ) % apiKeys.length;
 
   const attempts = [];
 
-  /*
-   * Subukan lahat ng models
-   * gamit lahat ng API keys.
-   */
   for (
     const modelName of
     GEMINI_MODELS_FALLBACK
   ) {
     for (
       let offset = 0;
-      offset <
-      apiKeys.length;
+      offset < apiKeys.length;
       offset++
     ) {
       attempts.push({
         modelName,
-
         apiKey:
           apiKeys[
             (
               firstKeyIndex +
               offset
-            ) %
-            apiKeys.length
+            ) % apiKeys.length
           ]
       });
     }
@@ -1498,32 +1182,23 @@ async function callGeminiApiWithFallback(
 
   for (
     let attempt = 0;
-    attempt <
-    attempts.length;
+    attempt < attempts.length;
     attempt++
   ) {
     const elapsed =
-      Date.now() -
-      startTime;
+      Date.now() - startTime;
 
     const remaining =
-      totalTimeoutMs -
-      elapsed;
+      totalTimeoutMs - elapsed;
 
-    if (
-      remaining <
-      1200
-    ) {
+    if (remaining < 1200) {
       break;
     }
 
     const {
       modelName,
       apiKey
-    } =
-      attempts[
-        attempt
-      ];
+    } = attempts[attempt];
 
     const endpoint =
       `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
@@ -1531,28 +1206,18 @@ async function callGeminiApiWithFallback(
     const controller =
       new AbortController();
 
-    /*
-     * Dating 8 seconds.
-     * Ginawang hanggang 18 seconds
-     * para sa mahahabang sagot.
-     */
     const requestTimeout =
       Math.min(
         18000,
-
         Math.max(
           3000,
-
-          remaining -
-          750
+          remaining - 750
         )
       );
 
     const timer =
       setTimeout(
-        () =>
-          controller.abort(),
-
+        () => controller.abort(),
         requestTimeout
       );
 
@@ -1562,43 +1227,31 @@ async function callGeminiApiWithFallback(
       );
 
       const response =
-        await fetch(
-          endpoint,
-          {
-            method:
-              'POST',
+        await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type':
+              'application/json',
+            'x-goog-api-key':
+              apiKey
+          },
+          body:
+            JSON.stringify(
+              requestBody
+            ),
+          signal:
+            controller.signal
+        });
 
-            headers: {
-              'Content-Type':
-                'application/json',
-
-              'x-goog-api-key':
-                apiKey
-            },
-
-            body:
-              JSON.stringify(
-                requestBody
-              ),
-
-            signal:
-              controller.signal
-          }
-        );
-
-      let data =
-        null;
+      let data = null;
 
       try {
         data =
           await response.json();
-
       } catch (_) {}
 
       const text =
-        extractGeminiText(
-          data
-        );
+        extractGeminiText(data);
 
       if (
         response.ok &&
@@ -1616,19 +1269,15 @@ async function callGeminiApiWithFallback(
         `API Status ${response.status}`;
 
       lastError =
-        new Error(
-          errorMessage
-        );
+        new Error(errorMessage);
 
       console.warn(
         `[Gemini Attempt ${attempt + 1}/${attempts.length}] Model: ${modelName} | Status: ${response.status} | ${errorMessage}`
       );
 
       if (
-        response.status ===
-          429 ||
-        response.status >=
-          500
+        response.status === 429 ||
+        response.status >= 500
       ) {
         await new Promise(
           resolve =>
@@ -1638,12 +1287,8 @@ async function callGeminiApiWithFallback(
             )
         );
       }
-
-    } catch (
-      error
-    ) {
-      lastError =
-        error;
+    } catch (error) {
+      lastError = error;
 
       if (
         error?.name ===
@@ -1652,17 +1297,13 @@ async function callGeminiApiWithFallback(
         console.warn(
           `⏱️ Gemini timeout | Model: ${modelName} | ${requestTimeout}ms`
         );
-
       } else {
         console.error(
           `[Gemini Fetch Attempt ${attempt + 1}/${attempts.length}] Model: ${modelName} | ${error.message}`
         );
       }
-
     } finally {
-      clearTimeout(
-        timer
-      );
+      clearTimeout(timer);
     }
   }
 
@@ -1698,20 +1339,15 @@ async function handleCommandAction(
     [
       '/stats',
       '/admin'
-    ].includes(
-      lowerText
-    )
+    ].includes(lowerText)
   ) {
     if (
       !adminPsid ||
-      senderPsid !==
-        adminPsid
+      senderPsid !== adminPsid
     ) {
       await sendTextMessage(
         senderPsid,
-
         '🚫 Access Denied!',
-
         pageToken
       );
 
@@ -1720,13 +1356,11 @@ async function handleCommandAction(
 
     await sendTextMessage(
       senderPsid,
-
       `📊 AI Status\n\n` +
       `• Active Keys: ${apiKeys.length}\n` +
       `• Current Key Index: ${currentKeyIndex}\n` +
       `• Philippine Time: ${currentDateTimePH}\n` +
       `• Status: Operational 🟢`,
-
       pageToken
     );
 
@@ -1737,10 +1371,9 @@ async function handleCommandAction(
    * SEARCH
    */
   if (
-    lowerText
-      .startsWith(
-        '/search '
-      )
+    lowerText.startsWith(
+      '/search '
+    )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1766,18 +1399,14 @@ async function handleCommandAction(
           `Philippine time: ${currentDateTimePH}\n\n` +
           `Search Data:\n${results || 'Walang nahanap.'}\n\n` +
           `Question:\n${query}`,
-
           apiKeys
         );
 
       await sendLongTextMessage(
         senderPsid,
-
         `🌐 Web Search Result:\n\n${reply}`,
-
         pageToken
       );
-
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1792,10 +1421,9 @@ async function handleCommandAction(
    * IMAGE GENERATION
    */
   if (
-    lowerText
-      .startsWith(
-        '/imagen '
-      )
+    lowerText.startsWith(
+      '/imagen '
+    )
   ) {
     const prompt =
       input
@@ -1805,9 +1433,7 @@ async function handleCommandAction(
         )
         .trim();
 
-    if (
-      prompt
-    ) {
+    if (prompt) {
       await generateAndSendImage(
         senderPsid,
         prompt,
@@ -1822,10 +1448,9 @@ async function handleCommandAction(
    * MATH
    */
   if (
-    lowerText
-      .startsWith(
-        '/math '
-      )
+    lowerText.startsWith(
+      '/math '
+    )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1844,18 +1469,14 @@ async function handleCommandAction(
       const reply =
         await getDirectGeminiResponse(
           `Solve this step-by-step: ${problem}`,
-
           apiKeys
         );
 
       await sendLongTextMessage(
         senderPsid,
-
         `🧮 Math Solution:\n\n${reply}`,
-
         pageToken
       );
-
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1870,10 +1491,9 @@ async function handleCommandAction(
    * CODE
    */
   if (
-    lowerText
-      .startsWith(
-        '/code '
-      )
+    lowerText.startsWith(
+      '/code '
+    )
   ) {
     await sendTypingOn(
       senderPsid,
@@ -1892,18 +1512,14 @@ async function handleCommandAction(
       const reply =
         await getDirectGeminiResponse(
           `Provide clean and functional code for: ${task}`,
-
           apiKeys
         );
 
       await sendLongTextMessage(
         senderPsid,
-
         `💻 Code Solution:\n\n${reply}`,
-
         pageToken
       );
-
     } finally {
       await sendTypingOff(
         senderPsid,
@@ -1921,13 +1537,10 @@ async function handleCommandAction(
     [
       '/commands',
       '/help'
-    ].includes(
-      lowerText
-    )
+    ].includes(lowerText)
   ) {
     await sendTextMessage(
       senderPsid,
-
       '📚 JepongDevxyz AI Commands\n\n' +
       '🔍 /search [topic]\n' +
       '🎨 /imagen [prompt]\n' +
@@ -1935,7 +1548,6 @@ async function handleCommandAction(
       '💻 /code [task]\n' +
       '🔄 /reset\n' +
       '📊 /stats (Admin only)',
-
       pageToken
     );
 
@@ -1964,10 +1576,9 @@ async function processAudioMessage(
       );
 
     const normalizedMime =
-      mimeType
-        .startsWith(
-          'audio/'
-        )
+      mimeType.startsWith(
+        'audio/'
+      )
         ? mimeType
         : 'audio/mpeg';
 
@@ -1980,12 +1591,10 @@ async function processAudioMessage(
                 text:
                   'Transcribe this audio first, then answer naturally and accurately.'
               },
-
               {
                 inline_data: {
                   mime_type:
                     normalizedMime,
-
                   data
                 }
               }
@@ -1993,15 +1602,10 @@ async function processAudioMessage(
           }
         ]
       },
-
       apiKeys,
-
       25000
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Audio Error:',
       error.message
@@ -2034,16 +1638,13 @@ async function processDocumentFile(
     const supported =
       mimeType ===
         'application/pdf' ||
-      mimeType
-        .startsWith(
-          'text/'
-        ) ||
+      mimeType.startsWith(
+        'text/'
+      ) ||
       mimeType ===
         'application/json';
 
-    if (
-      !supported
-    ) {
+    if (!supported) {
       return (
         `× Unsupported file type: ${mimeType}`
       );
@@ -2058,12 +1659,10 @@ async function processDocumentFile(
                 text:
                   'Analyze and summarize this document clearly and accurately.'
               },
-
               {
                 inline_data: {
                   mime_type:
                     mimeType,
-
                   data
                 }
               }
@@ -2071,15 +1670,10 @@ async function processDocumentFile(
           }
         ]
       },
-
       apiKeys,
-
       30000
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Document Error:',
       error.message
@@ -2105,9 +1699,7 @@ async function fetchAndSummarizeUrl(
         textWithUrl
       );
 
-    if (
-      !urls.length
-    ) {
+    if (!urls.length) {
       return (
         '× Walang valid URL na nakita.'
       );
@@ -2133,22 +1725,16 @@ Give an accurate summary and answer the user's question.`
             ]
           }
         ],
-
         tools: [
           {
             url_context: {}
           }
         ]
       },
-
       apiKeys,
-
       30000
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'URL Context Error:',
       error.message
@@ -2171,16 +1757,13 @@ async function generateAndSendImage(
 ) {
   await sendTextMessage(
     senderPsid,
-
     '🖼️ Ginagawa ang larawan...',
-
     pageToken
   );
 
   const seed =
     Math.floor(
-      Math.random() *
-      1000000
+      Math.random() * 1000000
     );
 
   const imageUrl =
@@ -2195,13 +1778,10 @@ async function generateAndSendImage(
       imageUrl,
       pageToken
     );
-
   } catch (_) {
     await sendTextMessage(
       senderPsid,
-
       '❌ Error loading image.',
-
       pageToken
     );
   }
@@ -2229,15 +1809,10 @@ async function getDirectGeminiResponse(
           }
         ]
       },
-
       apiKeys,
-
       25000
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Direct Gemini Error:',
       error.message
@@ -2268,10 +1843,9 @@ async function analyzeHomeworkWithGemini(
       );
 
     const normalizedMime =
-      mimeType
-        .startsWith(
-          'image/'
-        )
+      mimeType.startsWith(
+        'image/'
+      )
         ? mimeType
         : 'image/jpeg';
 
@@ -2284,12 +1858,10 @@ async function analyzeHomeworkWithGemini(
                 text:
                   'Analyze this image carefully. If it contains homework, explain the answer step-by-step.'
               },
-
               {
                 inline_data: {
                   mime_type:
                     normalizedMime,
-
                   data
                 }
               }
@@ -2297,15 +1869,10 @@ async function analyzeHomeworkWithGemini(
           }
         ]
       },
-
       apiKeys,
-
       25000
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Image Analysis Error:',
       error.message
@@ -2333,8 +1900,7 @@ async function processDirectAI(
       'Boss';
 
     const lowerMsg =
-      userMessage
-        .toLowerCase();
+      userMessage.toLowerCase();
 
     if (
       [
@@ -2345,26 +1911,20 @@ async function processDirectAI(
         'normal mode'
       ].some(
         cmd =>
-          lowerMsg.includes(
-            cmd
-          )
+          lowerMsg.includes(cmd)
       )
     ) {
-      userPersonasMap
-        .delete(
-          senderPsid
-        );
+      userPersonasMap.delete(
+        senderPsid
+      );
 
-      userConversationsMap
-        .delete(
-          senderPsid
-        );
+      userConversationsMap.delete(
+        senderPsid
+      );
 
       await sendTextMessage(
         senderPsid,
-
         `✓ Naka-reset na ang mode at memory. Normal mode na ulit, ${firstName}!`,
-
         pageToken
       );
 
@@ -2377,17 +1937,13 @@ async function processDirectAI(
     }
 
     let currentPersona =
-      userPersonasMap
-        .get(
-          senderPsid
-        ) ||
-      null;
+      userPersonasMap.get(
+        senderPsid
+      ) || null;
 
     const isPersonaTrigger =
       /umakting ka|maging|gayahin mo|ikaw si|pretend/i
-        .test(
-          userMessage
-        );
+        .test(userMessage);
 
     if (
       isPersonaTrigger &&
@@ -2396,48 +1952,36 @@ async function processDirectAI(
       currentPersona =
         userMessage;
 
-      userPersonasMap
-        .set(
-          senderPsid,
-          currentPersona
-        );
+      userPersonasMap.set(
+        senderPsid,
+        currentPersona
+      );
     }
 
     let history =
-      userConversationsMap
-        .get(
-          senderPsid
-        ) ||
-      [];
+      userConversationsMap.get(
+        senderPsid
+      ) || [];
 
     let messageToSend =
       userMessage;
 
     const isSearchQuery =
       /kailan|sino si|ano ang balita|latest|updates|search|presyo|petsa|panahon|weather|score|sino ang|ano ang nangyari|balita ngayon/i
-        .test(
-          userMessage
-        );
+        .test(userMessage);
 
-    if (
-      isSearchQuery
-    ) {
+    if (isSearchQuery) {
       try {
         const searchData =
           await performFreeWebSearch(
             userMessage
           );
 
-        if (
-          searchData
-        ) {
+        if (searchData) {
           messageToSend =
             `${userMessage}\n\n[Live Real-Time Web Data]:\n${searchData}`;
         }
-
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.warn(
           'Search Error:',
           error.message
@@ -2446,9 +1990,7 @@ async function processDirectAI(
     }
 
     history.push({
-      role:
-        'user',
-
+      role: 'user',
       parts: [
         {
           text:
@@ -2479,9 +2021,7 @@ RULES:
 - Use supplied Live Real-Time Web Data when available.
 - Never invent live/current facts.`;
 
-    if (
-      currentPersona
-    ) {
+    if (currentPersona) {
       systemInstructionText +=
         `\nCurrent requested persona: "${currentPersona}"`;
     }
@@ -2497,27 +2037,16 @@ RULES:
               }
             ]
           },
-
-          contents:
-            history
+          contents: history
         },
-
         apiKeys,
-
         30000
       );
 
-    /*
-     * Itago sa memory ang original user text,
-     * hindi yung injected web data.
-     */
     history[
-      history.length -
-      1
+      history.length - 1
     ] = {
-      role:
-        'user',
-
+      role: 'user',
       parts: [
         {
           text:
@@ -2527,9 +2056,7 @@ RULES:
     };
 
     history.push({
-      role:
-        'model',
-
+      role: 'model',
       parts: [
         {
           text:
@@ -2550,15 +2077,15 @@ RULES:
     );
 
     const formattedReply =
-      `.ᐟ ${firstName} : ' ${userMessage} '\n` +
-      `━━━━━━━━━━━━━━━━━━\n\n` +
-      `${aiReply}`;
+      formatMessengerReply(
+        userMessage,
+        aiReply,
+        firstName
+      );
 
     await sendLongTextMessage(
       senderPsid,
-
       formattedReply,
-
       pageToken
     );
 
@@ -2566,10 +2093,7 @@ RULES:
       senderPsid,
       pageToken
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'AI Processing Error:',
       error
@@ -2577,9 +2101,7 @@ RULES:
 
     await sendTextMessage(
       senderPsid,
-
       'Medyo busy ang server, paki-ulit sandali.',
-
       pageToken
     );
 
@@ -2598,9 +2120,7 @@ async function callMessengerSendApi(
   payload,
   pageToken
 ) {
-  if (
-    !pageToken
-  ) {
+  if (!pageToken) {
     throw new Error(
       'Missing PAGE_ACCESS_TOKEN.'
     );
@@ -2610,36 +2130,26 @@ async function callMessengerSendApi(
     await fetch(
       `https://graph.facebook.com/${FB_GRAPH_VERSION}/me/messages`,
       {
-        method:
-          'POST',
-
+        method: 'POST',
         headers: {
           'Content-Type':
             'application/json',
-
           Authorization:
             `Bearer ${pageToken}`
         },
-
         body:
-          JSON.stringify(
-            payload
-          )
+          JSON.stringify(payload)
       }
     );
 
-  let data =
-    null;
+  let data = null;
 
   try {
     data =
       await response.json();
-
   } catch (_) {}
 
-  if (
-    !response.ok
-  ) {
+  if (!response.ok) {
     throw new Error(
       data?.error?.message ||
       `Meta HTTP ${response.status}`
@@ -2661,20 +2171,14 @@ async function sendTypingOn(
     await callMessengerSendApi(
       {
         recipient: {
-          id:
-            senderPsid
+          id: senderPsid
         },
-
         sender_action:
           'typing_on'
       },
-
       pageToken
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Typing On Error:',
       error.message
@@ -2690,20 +2194,14 @@ async function sendTypingOff(
     await callMessengerSendApi(
       {
         recipient: {
-          id:
-            senderPsid
+          id: senderPsid
         },
-
         sender_action:
           'typing_off'
       },
-
       pageToken
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Typing Off Error:',
       error.message
@@ -2725,30 +2223,21 @@ async function sendMediaAttachment(
     await callMessengerSendApi(
       {
         recipient: {
-          id:
-            senderPsid
+          id: senderPsid
         },
-
         message: {
           attachment: {
             type,
-
             payload: {
               url,
-
-              is_reusable:
-                true
+              is_reusable: true
             }
           }
         }
       },
-
       pageToken
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Send Media Error:',
       error.message
@@ -2757,40 +2246,163 @@ async function sendMediaAttachment(
 }
 
 /* =========================================================
-   MESSENGER TEXT CLEANUP
+   MESSENGER FORMATTING
 ========================================================= */
 
-function cleanMessengerFormatting(
-  text
-) {
-  return String(
-    text ?? ''
-  )
-    .replace(
-      /\r\n/g,
-      '\n'
+function formatMessengerLine(line) {
+  let value =
+    line.trim();
+
+  if (!value) {
+    return '';
+  }
+
+  if (
+    /^#{1,6}\s+/.test(value)
+  ) {
+    value =
+      `📌 ${
+        value.replace(
+          /^#{1,6}\s+/,
+          ''
+        )
+      }`;
+  }
+
+  if (
+    /^(?:[-*_]\s*){3,}$/.test(
+      value
     )
-    .replace(
-      /^\s{0,3}#{1,6}\s+/gm,
-      ''
-    )
-    .replace(
-      /^\s*[*_-]{3,}\s*$/gm,
-      '━━━━━━━━━━━━━━━━━━'
-    )
-    .replace(
-      /\*\*(.*?)\*\*/g,
-      '$1'
-    )
-    .replace(
-      /__(.*?)__/g,
-      '$1'
-    )
-    .replace(
-      /\n{3,}/g,
-      '\n\n'
-    )
+  ) {
+    return MESSENGER_SEPARATOR;
+  }
+
+  value =
+    value
+      .replace(
+        /^\s*[-*+]\s+/,
+        '• '
+      )
+      .replace(
+        /^(\s*)(\d+)[.)]\s+/,
+        '$1$2. '
+      )
+      .replace(
+        /^\s*>\s?/,
+        '▸ '
+      )
+      .replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi,
+        '$1 ($2)'
+      )
+      .replace(
+        /\*\*(.*?)\*\*/g,
+        '$1'
+      )
+      .replace(
+        /__(.*?)__/g,
+        '$1'
+      )
+      .replace(
+        /~~(.*?)~~/g,
+        '$1'
+      )
+      .replace(
+        /`([^`]+)`/g,
+        '$1'
+      )
+      .replace(
+        /[ \t]+/g,
+        ' '
+      )
+      .trim();
+
+  return value;
+}
+
+function cleanMessengerFormatting(text) {
+  const lines =
+    String(text ?? '')
+      .replace(
+        /\r\n?/g,
+        '\n'
+      )
+      .replace(
+        /\u00a0/g,
+        ' '
+      )
+      .split('\n')
+      .map(formatMessengerLine);
+
+  const output = [];
+  let blankPending =
+    false;
+
+  for (const line of lines) {
+    if (!line) {
+      if (
+        output.length &&
+        output[
+          output.length - 1
+        ] !== ''
+      ) {
+        blankPending =
+          true;
+      }
+
+      continue;
+    }
+
+    if (blankPending) {
+      output.push('');
+      blankPending =
+        false;
+    }
+
+    output.push(line);
+  }
+
+  return output
+    .join('\n')
     .trim();
+}
+
+function formatMessengerReply(
+  userMessage,
+  aiReply,
+  firstName = 'Boss'
+) {
+  const question =
+    cleanMessengerFormatting(
+      userMessage
+    );
+
+  const answer =
+    cleanMessengerFormatting(
+      aiReply
+    );
+
+  if (!answer) {
+    return question;
+  }
+
+  if (!question) {
+    return answer;
+  }
+
+  return [
+    `💬 ${
+      cleanMessengerFormatting(
+        firstName
+      ) || 'Boss'
+    }`,
+    '',
+    question,
+    '',
+    MESSENGER_SEPARATOR,
+    '',
+    answer
+  ].join('\n');
 }
 
 /* =========================================================
@@ -2803,14 +2415,10 @@ function splitLongMessage(
     MESSENGER_CHUNK_SIZE
 ) {
   const source =
-    String(
-      text ?? ''
-    )
+    String(text ?? '')
       .trim();
 
-  if (
-    !source
-  ) {
+  if (!source) {
     return [];
   }
 
@@ -2818,13 +2426,10 @@ function splitLongMessage(
     source.length <=
     maxLength
   ) {
-    return [
-      source
-    ];
+    return [source];
   }
 
   const chunks = [];
-
   let remaining =
     source;
 
@@ -2832,52 +2437,38 @@ function splitLongMessage(
     remaining.length >
     maxLength
   ) {
-    /*
-     * Unahin:
-     * 1. paragraph
-     * 2. newline
-     * 3. sentence
-     * 4. word
-     */
     let cut =
-      remaining
-        .lastIndexOf(
-          '\n\n',
-          maxLength
-        );
+      remaining.lastIndexOf(
+        '\n\n',
+        maxLength
+      );
 
     if (
       cut <
       Math.floor(
-        maxLength *
-        0.5
+        maxLength * 0.5
       )
     ) {
       cut =
-        remaining
-          .lastIndexOf(
-            '\n',
-            maxLength
-          );
+        remaining.lastIndexOf(
+          '\n',
+          maxLength
+        );
     }
 
     if (
       cut <
       Math.floor(
-        maxLength *
-        0.5
+        maxLength * 0.5
       )
     ) {
       cut =
-        remaining
-          .lastIndexOf(
-            '. ',
-            maxLength
-          );
+        remaining.lastIndexOf(
+          '. ',
+          maxLength
+        );
 
-      if (
-        cut > 0
-      ) {
+      if (cut > 0) {
         cut += 1;
       }
     }
@@ -2885,55 +2476,38 @@ function splitLongMessage(
     if (
       cut <
       Math.floor(
-        maxLength *
-        0.5
+        maxLength * 0.5
       )
     ) {
       cut =
-        remaining
-          .lastIndexOf(
-            ' ',
-            maxLength
-          );
+        remaining.lastIndexOf(
+          ' ',
+          maxLength
+        );
     }
 
-    if (
-      cut <= 0
-    ) {
+    if (cut <= 0) {
       cut =
         maxLength;
     }
 
     const chunk =
       remaining
-        .slice(
-          0,
-          cut
-        )
+        .slice(0, cut)
         .trim();
 
-    if (
-      chunk
-    ) {
-      chunks.push(
-        chunk
-      );
+    if (chunk) {
+      chunks.push(chunk);
     }
 
     remaining =
       remaining
-        .slice(
-          cut
-        )
+        .slice(cut)
         .trim();
   }
 
-  if (
-    remaining
-  ) {
-    chunks.push(
-      remaining
-    );
+  if (remaining) {
+    chunks.push(remaining);
   }
 
   return chunks;
@@ -2953,9 +2527,7 @@ async function sendLongTextMessage(
       responseText
     );
 
-  if (
-    !cleanText
-  ) {
+  if (!cleanText) {
     return;
   }
 
@@ -2970,8 +2542,7 @@ async function sendLongTextMessage(
 
   for (
     let index = 0;
-    index <
-    totalParts;
+    index < totalParts;
     index++
   ) {
     const prefix =
@@ -2981,21 +2552,13 @@ async function sendLongTextMessage(
 
     await sendTextMessage(
       senderPsid,
-
-      prefix +
-      chunks[index],
-
+      prefix + chunks[index],
       pageToken
     );
 
-    /*
-     * Small delay para maayos
-     * ang order ng bubbles.
-     */
     if (
       index <
-      totalParts -
-      1
+      totalParts - 1
     ) {
       await new Promise(
         resolve =>
@@ -3021,25 +2584,18 @@ async function sendTextMessage(
     await callMessengerSendApi(
       {
         recipient: {
-          id:
-            senderPsid
+          id: senderPsid
         },
-
         message: {
           text:
             String(
-              responseText ??
-              ''
+              responseText ?? ''
             )
         }
       },
-
       pageToken
     );
-
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
       'Send Text Error:',
       error.message
