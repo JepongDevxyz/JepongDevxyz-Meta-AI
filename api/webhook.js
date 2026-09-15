@@ -2550,7 +2550,7 @@ RULES:
     );
 
     const formattedReply =
-      `.ᐟ ${firstName} : ' ${userMessage} '\n` +
+      `.ᐟ ${firstName} :  ${userMessage} \n` +
       `━━━━━━━━━━━━━━━━━━\n\n` +
       `${aiReply}`;
 
