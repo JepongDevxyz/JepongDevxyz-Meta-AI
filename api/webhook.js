@@ -762,18 +762,7 @@ WRITING:
 - Be accurate, logical and useful.
 - Use correct spelling and grammar.
 - Automatically match the user's language.
-- Never invent live information.
-- Write responses in clean, natural, balanced paragraphs.
-- Group related sentences into the same paragraph.
-- Do not place every sentence on a separate line.
-- Normally use 2 to 5 related sentences per paragraph.
-- Start a new paragraph only when the topic or idea changes.
-- Avoid unnecessary line breaks.
-- Avoid excessive headings, bullet points, emojis, and decorative separators.
-- Use lists only when they genuinely improve readability.
-- Keep paragraphs visually clean and consistent.
-- Preserve code blocks when code is requested.
-- Format answers so they are easy to read inside a chat interface.`;
+- Never invent live information.`;
 
     let history =
       sessionKey
@@ -2483,32 +2472,12 @@ IDENTITY:
 - Your official name is JepongDevxyz AI.
 - Your creator is Jepong Devxyz (Jay-Ar Lee Espiritu).
 
-CORE RULES:
+RULES:
 - Match the user's language naturally.
 - Use correct spelling and grammar.
-- Give accurate, useful, and direct answers.
+- Give accurate and useful answers.
 - Use supplied Live Real-Time Web Data when available.
-- Never invent live/current facts.
-- Clearly distinguish known facts from uncertain information.
-
-MESSENGER RESPONSE STYLE:
-- Write responses in clean, natural paragraphs.
-- Group related sentences into the same paragraph.
-- Do not put every sentence on a separate line.
-- Normally use 2 to 5 related sentences per paragraph.
-- Start a new paragraph only when the topic or idea changes.
-- Avoid unnecessary line breaks.
-- Avoid excessive headings and bullet points.
-- Use numbered or bulleted lists only when they genuinely improve readability.
-- Keep paragraph spacing consistent.
-- Avoid excessive emojis and decorative symbols.
-- Preserve code blocks when code is requested.
-- Make answers visually balanced and easy to read inside Facebook Messenger.
-- Answer the user's actual question first.
-- Add explanation afterward when useful.
-- Avoid unnecessary repetition.
-- For simple questions, answer concisely.
-- For complicated questions, provide enough detail to be useful.`;
+- Never invent live/current facts.`;
 
     if (
       currentPersona
@@ -2581,9 +2550,9 @@ MESSENGER RESPONSE STYLE:
     );
 
     const formattedReply =
-      `.ᐟ ${firstName} : '${userMessage}'\n` +
+      `.ᐟ ${firstName} : ' ${userMessage} '\n` +
       `━━━━━━━━━━━━━━━━━━\n\n` +
-      aiReply;
+      `${aiReply}`;
 
     await sendLongTextMessage(
       senderPsid,
@@ -2794,76 +2763,33 @@ async function sendMediaAttachment(
 function cleanMessengerFormatting(
   text
 ) {
-  let output = String(
+  return String(
     text ?? ''
   )
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s*[*_-]{3,}\s*$/gm, '━━━━━━━━━━━━━━━━━━')
-    .replace(/\*\*(.*?)\*\*/gs, '$1')
-    .replace(/__(.*?)__/gs, '$1')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n');
-
-  const lines = output.split('\n');
-  const rebuilt = [];
-  let inCodeBlock = false;
-
-  const isStructuredLine = line => {
-    const value = line.trim();
-
-    return (
-      !value ||
-      /^[-•*]\s+/.test(value) ||
-      /^\d+[.)]\s+/.test(value) ||
-      /^```/.test(value) ||
-      /^━━━━━━━━/.test(value) ||
-      /^[A-Za-z0-9 _-]+:\s*$/.test(value)
-    );
-  };
-
-  for (let index = 0; index < lines.length; index++) {
-    const current = lines[index].trim();
-
-    if (/^```/.test(current)) {
-      inCodeBlock = !inCodeBlock;
-      rebuilt.push(current);
-      continue;
-    }
-
-    if (inCodeBlock) {
-      rebuilt.push(lines[index]);
-      continue;
-    }
-
-    if (!current) {
-      if (rebuilt.length && rebuilt[rebuilt.length - 1] !== '') {
-        rebuilt.push('');
-      }
-      continue;
-    }
-
-    const previous = rebuilt.length
-      ? rebuilt[rebuilt.length - 1]
-      : null;
-
-    if (
-      previous &&
-      previous !== '' &&
-      !isStructuredLine(previous) &&
-      !isStructuredLine(current)
-    ) {
-      rebuilt[rebuilt.length - 1] = `${previous} ${current}`;
-      continue;
-    }
-
-    rebuilt.push(current);
-  }
-
-  return rebuilt
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(
+      /\r\n/g,
+      '\n'
+    )
+    .replace(
+      /^\s{0,3}#{1,6}\s+/gm,
+      ''
+    )
+    .replace(
+      /^\s*[*_-]{3,}\s*$/gm,
+      '━━━━━━━━━━━━━━━━━━'
+    )
+    .replace(
+      /\*\*(.*?)\*\*/g,
+      '$1'
+    )
+    .replace(
+      /__(.*?)__/g,
+      '$1'
+    )
+    .replace(
+      /\n{3,}/g,
+      '\n\n'
+    )
     .trim();
 }
 
