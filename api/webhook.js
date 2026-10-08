@@ -1,7 +1,6 @@
 const GEMINI_MODELS_FALLBACK = [
-  'gemini-flash-lite-latest',
   'gemini-3.5-flash-lite',
-  'gemini-flash-latest'
+  'gemini-3.1-flash-lite'
 ];
 
 const FB_GRAPH_VERSION = process.env.FB_GRAPH_VERSION || 'v26.0';
@@ -281,354 +280,240 @@ function getPhilippineDateTime() {
 }
 
 /* =========================================================
-   WEB SEARCH
+   WEB SEARCH (no API key required — works 2026)
+   Priority: Weather → DuckDuckGo Instant → Wikipedia Search
+   → Wikipedia Summary → SearXNG public instances → Tavily (optional)
 ========================================================= */
 
-async function performFreeWebSearch(
-  query
-) {
-  const cleanQuery =
-    String(
-      query || ''
+async function performFreeWebSearch(query) {
+  const cleanQuery = String(query || '')
+    .replace(
+      /^(search|mag-search|hanapin|ano ang balita sa|updates sa|\/search)\s+/i,
+      ''
     )
-      .replace(
-        /^(search|mag-search|hanapin|ano ang balita sa|updates sa)\s+/i,
-        ''
-      )
-      .trim();
+    .trim();
 
-  if (
-    !cleanQuery
-  ) {
-    return null;
-  }
+  if (!cleanQuery) return null;
 
+  const year = new Date().getFullYear();
   const liveIntent =
-    /(latest|update|balita|ngayon|today|current|presyo|price|score|weather|panahon|forecast)/i
-      .test(
-        cleanQuery
-      );
+    /(latest|update|balita|ngayon|today|current|presyo|price|score|weather|panahon|forecast|news)/i.test(
+      cleanQuery
+    );
+  const searchQuery = liveIntent
+    ? `${cleanQuery} ${year}`
+    : cleanQuery;
 
-  const searchQuery =
-    liveIntent
-      ? `${cleanQuery} ${new Date().getFullYear()}`
-      : cleanQuery;
+  const ua = {
+    'User-Agent':
+      'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0; +https://jepongdevxyz.com)'
+  };
 
-  /*
-   * WEATHER
-   */
+  /* ---------- 1. WEATHER (Open-Meteo — no key) ---------- */
   if (
-    /weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast/i
-      .test(
-        cleanQuery
-      )
+    /weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast/i.test(
+      cleanQuery
+    )
   ) {
     try {
-      const place =
-        cleanQuery
-          .replace(
-            /\b(weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast|ngayon|today|current|kumusta)\b/gi,
-            ' '
-          )
-          .replace(
-            /\s+/g,
-            ' '
-          )
-          .trim()
-          .replace(
-            /^(sa|in|at)\s+/i,
-            ''
-          )
-          .trim();
+      const place = cleanQuery
+        .replace(
+          /\b(weather|panahon|ulan|init|bagyo|temperatura|temperature|forecast|ngayon|today|current|kumusta)\b/gi,
+          ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^(sa|in|at)\s+/i, '')
+        .trim() || 'Manila';
 
-      if (
-        place
-      ) {
-        const geoRes =
-          await fetch(
-            `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-              place
-            )}&count=1&language=en&format=json`
+      const geoRes = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=en&format=json`,
+        { headers: ua }
+      );
+
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        const g = geoData.results?.[0];
+        if (g) {
+          const weatherRes = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${g.latitude}&longitude=${g.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`,
+            { headers: ua }
           );
-
-        if (
-          geoRes.ok
-        ) {
-          const geoData =
-            await geoRes.json();
-
-          if (
-            geoData
-              .results?.[0]
-          ) {
-            const {
-              latitude,
-              longitude,
-              name,
-              admin1,
-              country
-            } =
-              geoData
-                .results[0];
-
-            const weatherRes =
-              await fetch(
-                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m&timezone=auto`
+          if (weatherRes.ok) {
+            const c = (await weatherRes.json()).current;
+            if (c) {
+              return (
+                `Live Weather Report (${g.name}, ${g.admin1 || ''}, ${g.country})\n` +
+                `Temperature: ${c.temperature_2m}°C\n` +
+                `Feels Like: ${c.apparent_temperature}°C\n` +
+                `Humidity: ${c.relative_humidity_2m}%\n` +
+                `Precipitation: ${c.precipitation} mm\n` +
+                `Wind: ${c.wind_speed_10m} km/h`
               );
-
-            if (
-              weatherRes.ok
-            ) {
-              const weatherData =
-                await weatherRes.json();
-
-              const c =
-                weatherData.current;
-
-              if (
-                c
-              ) {
-                return (
-                  `Live Weather Report (${name}, ${admin1 || ''}, ${country})\n` +
-                  `Temperature: ${c.temperature_2m}°C\n` +
-                  `Feels Like: ${c.apparent_temperature}°C\n` +
-                  `Humidity: ${c.relative_humidity_2m}%\n` +
-                  `Precipitation: ${c.precipitation} mm\n` +
-                  `Wind: ${c.wind_speed_10m} km/h`
-                );
-              }
             }
           }
         }
       }
-
-    } catch (
-      error
-    ) {
-      console.warn(
-        '[Weather API Error]',
-        error.message
-      );
+    } catch (error) {
+      console.warn('[Weather API Error]', error.message);
     }
   }
 
-  /*
-   * TAVILY
-   */
-  const tavilyKey =
-    process.env
-      .TAVILY_API_KEY;
-
-  if (
-    tavilyKey
-  ) {
-    const controller =
-      new AbortController();
-
-    const timer =
-      setTimeout(
-        () =>
-          controller.abort(),
-        5000
-      );
-
+  /* ---------- 2. DuckDuckGo Instant Answer (no key) ---------- */
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
     try {
-      const response =
-        await fetch(
-          'https://api.tavily.com/search',
-          {
-            method:
-              'POST',
+      const ddgRes = await fetch(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(searchQuery)}&format=json&no_html=1&skip_disambig=1`,
+        { headers: ua, signal: controller.signal }
+      );
+      if (ddgRes.ok) {
+        const d = await ddgRes.json();
+        const parts = [];
+        if (d.Heading) parts.push(`📌 ${d.Heading}`);
+        if (d.Abstract) parts.push(d.Abstract);
+        if (d.Answer) parts.push(`Answer: ${d.Answer}`);
+        if (Array.isArray(d.RelatedTopics) && d.RelatedTopics.length) {
+          const related = d.RelatedTopics
+            .filter(t => t.Text)
+            .slice(0, 4)
+            .map(t => `• ${t.Text}`);
+          if (related.length) parts.push(related.join('\n'));
+        }
+        if (parts.length) return parts.join('\n\n');
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    console.warn('[DuckDuckGo Instant]', error.message);
+  }
 
-            headers: {
-              'Content-Type':
-                'application/json',
-
-              Authorization:
-                `Bearer ${tavilyKey}`
-            },
-
-            body:
-              JSON.stringify({
-                query:
-                  searchQuery,
-
-                search_depth:
-                  'basic',
-
-                max_results:
-                  4
-              }),
-
-            signal:
-              controller.signal
-          }
-        );
-
-      if (
-        response.ok
-      ) {
-        const data =
-          await response.json();
-
-        if (
-          Array.isArray(
-            data.results
-          ) &&
-          data.results.length
-        ) {
-          return data
-            .results
-            .slice(
-              0,
-              4
-            )
-            .map(
-              r =>
-                `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
-            )
-            .join(
-              '\n\n'
-            );
+  /* ---------- 3. Wikipedia Search API (no key) ---------- */
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const wikiSearchRes = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&srlimit=4&format=json&origin=*`,
+        { headers: ua, signal: controller.signal }
+      );
+      if (wikiSearchRes.ok) {
+        const wikiData = await wikiSearchRes.json();
+        const hits = wikiData?.query?.search || [];
+        if (hits.length) {
+          const lines = hits.map(h => {
+            const snippet = String(h.snippet || '')
+              .replace(/<[^>]+>/g, '')
+              .replace(/&quot;/g, '"')
+              .replace(/&amp;/g, '&')
+              .trim();
+            return `• ${h.title}: ${snippet}`;
+          });
+          return lines.join('\n\n');
         }
       }
-
-    } catch (
-      error
-    ) {
-      console.warn(
-        '[Tavily Search Failed]',
-        error.message
-      );
-
     } finally {
-      clearTimeout(
-        timer
-      );
+      clearTimeout(timer);
     }
+  } catch (error) {
+    console.warn('[Wikipedia Search]', error.message);
   }
 
-  /*
-   * SEARXNG
-   */
-  const instances = [
-    'https://search.ononoki.org',
-    'https://searx.be',
-    'https://baresearch.org'
+  /* ---------- 4. Wikipedia Summary (no key) ---------- */
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const summaryRes = await fetch(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`,
+        { headers: ua, signal: controller.signal }
+      );
+      if (summaryRes.ok) {
+        const data = await summaryRes.json();
+        if (data.extract) return data.extract;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_) {}
+
+  /* ---------- 5. SearXNG public instances (no key) ---------- */
+  const searxInstances = [
+    'https://searx.ononoki.org',
+    'https://priv.au',
+    'https://searxng.site',
+    'https://search.rhscz.eu',
+    'https://paulgo.io',
+    'https://search.bus-hit.me'
   ];
 
-  for (
-    const instance of
-    instances
-  ) {
-    const controller =
-      new AbortController();
-
-    const timer =
-      setTimeout(
-        () =>
-          controller.abort(),
-        3500
-      );
-
+  for (const instance of searxInstances) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3200);
     try {
-      const searchUrl =
-        `${instance}/search?q=${encodeURIComponent(
-          searchQuery
-        )}&format=json&language=tl,en`;
-
-      const response =
-        await fetch(
-          searchUrl,
-          {
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0)'
-            },
-
-            signal:
-              controller.signal
-          }
-        );
-
-      if (
-        response.ok
-      ) {
-        const data =
-          await response.json();
-
-        if (
-          Array.isArray(
-            data.results
-          ) &&
-          data.results.length
-        ) {
-          const results =
-            data.results
-              .slice(
-                0,
-                4
-              )
-              .map(
-                r =>
-                  `• ${r.title || 'Result'}: ${r.content || r.url || ''}`
-              )
-              .filter(
-                Boolean
-              );
-
-          if (
-            results.length
-          ) {
-            return results
-              .join(
-                '\n\n'
-              );
-          }
+      const response = await fetch(
+        `${instance}/search?q=${encodeURIComponent(searchQuery)}&format=json&language=en`,
+        {
+          headers: {
+            ...ua,
+            Accept: 'application/json'
+          },
+          signal: controller.signal
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.results) && data.results.length) {
+          const results = data.results
+            .slice(0, 4)
+            .map(r => `• ${r.title || 'Result'}: ${(r.content || r.url || '').slice(0, 280)}`)
+            .filter(Boolean);
+          if (results.length) return results.join('\n\n');
         }
       }
-
     } catch (_) {
-      // Try next instance.
-
+      // next instance
     } finally {
-      clearTimeout(
-        timer
-      );
+      clearTimeout(timer);
     }
   }
 
-  /*
-   * WIKIPEDIA FALLBACK
-   */
-  try {
-    const wikiRes =
-      await fetch(
-        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
-          cleanQuery
-        )}`,
-        {
-          headers: {
-            'User-Agent':
-              'JepongDevxyzBot/1.0'
-          }
+  /* ---------- 6. Tavily (optional — only if key exists) ---------- */
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  if (tavilyKey) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tavilyKey}`
+        },
+        body: JSON.stringify({
+          query: searchQuery,
+          search_depth: 'basic',
+          max_results: 4
+        }),
+        signal: controller.signal
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.results) && data.results.length) {
+          return data.results
+            .slice(0, 4)
+            .map(r => `• ${r.title || 'Result'}: ${r.content || r.url || ''}`)
+            .join('\n\n');
         }
-      );
-
-    if (
-      wikiRes.ok
-    ) {
-      const data =
-        await wikiRes.json();
-
-      if (
-        data.extract
-      ) {
-        return data.extract;
       }
+    } catch (error) {
+      console.warn('[Tavily Search Failed]', error.message);
+    } finally {
+      clearTimeout(timer);
     }
-
-  } catch (_) {}
+  }
 
   return null;
 }
@@ -1190,7 +1075,7 @@ WRITING:
                 'image'
               ) {
                 const reply =
-                  await analyzeHomeworkWithGemini(
+                  await analyzeImageWithGemini(
                     attachment
                       .payload
                       .url,
@@ -2250,10 +2135,10 @@ async function getDirectGeminiResponse(
 }
 
 /* =========================================================
-   IMAGE ANALYSIS
+   IMAGE ANALYSIS (any photo: product, object, homework, etc.)
 ========================================================= */
 
-async function analyzeHomeworkWithGemini(
+async function analyzeImageWithGemini(
   imageUrl,
   apiKeys
 ) {
@@ -2281,17 +2166,25 @@ async function analyzeHomeworkWithGemini(
           {
             parts: [
               {
-                text:
-                  'Analyze this image carefully. If it contains homework, explain the answer step-by-step.'
-              },
-
-              {
                 inline_data: {
                   mime_type:
                     normalizedMime,
 
                   data
                 }
+              },
+
+              {
+                text:
+`Describe and analyze this image clearly and usefully.
+
+Rules:
+- Identify what the main subject is (product, object, person, text, screenshot, homework, food, place, etc.).
+- If it is a product or item for sale: name it, brand if visible, key features, color, condition, and any readable labels/prices.
+- If it contains text or homework: read the text accurately and solve or explain step-by-step.
+- If it is a screenshot or document: summarize the important content.
+- Give a natural, helpful reply in the same language the user usually uses (Tagalog/English mix is fine).
+- Be accurate. Do not invent details that are not visible.`
               }
             ]
           }
@@ -2312,7 +2205,7 @@ async function analyzeHomeworkWithGemini(
     );
 
     return (
-      'Error sa pag-analyze ng larawan.'
+      'Error sa pag-analyze ng larawan. Paki-ulit o subukan ibang larawan.'
     );
   }
 }
