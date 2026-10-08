@@ -306,7 +306,8 @@ async function performFreeWebSearch(query) {
 
   const ua = {
     'User-Agent':
-      'Mozilla/5.0 (compatible; JepongDevxyzBot/1.0; +https://jepongdevxyz.com)'
+      'JepongDevxyzBot/1.0 (https://jepongdevxyz.com; contact@jepongdevxyz.com)',
+    Accept: 'application/json'
   };
 
   /* ---------- 1. WEATHER (Open-Meteo — no key) ---------- */
